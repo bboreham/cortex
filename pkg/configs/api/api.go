@@ -14,7 +14,6 @@ import (
 
 	"github.com/weaveworks/common/user"
 	"github.com/weaveworks/cortex/pkg/configs"
-	configs_client "github.com/weaveworks/cortex/pkg/configs/client"
 	"github.com/weaveworks/cortex/pkg/configs/db"
 	"github.com/weaveworks/cortex/pkg/util"
 )
@@ -177,7 +176,8 @@ func validateAlertmanagerConfig(cfg string) error {
 }
 
 func validateRulesFiles(c configs.Config) error {
-	_, err := configs_client.RulesFromConfig(c)
+	rc := configs.RulesConfig(c.RulesFiles)
+	_, err := rc.Parse()
 	return err
 }
 

@@ -4,6 +4,9 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/go-kit/kit/log"
+	"github.com/prometheus/prometheus/pkg/labels"
+	"github.com/prometheus/prometheus/pkg/rulefmt"
 	"github.com/prometheus/prometheus/promql"
 	"github.com/prometheus/prometheus/rules"
 	"github.com/weaveworks/cortex/pkg/util"
@@ -63,34 +66,58 @@ func (c RulesConfig) Equal(o RulesConfig) bool {
 	return true
 }
 
-// Parse rules from the Cortex configuration.
+// Parse parses and validates the content of the rule files in a RulesConfig.
 //
-// Strongly inspired by `loadGroups` in Prometheus.
-func (c RulesConfig) Parse() ([]rules.Rule, error) {
-	result := []rules.Rule{}
+// NOTE: On one hand, we cannot return fully-fledged lists of rules.Group
+// here yet, as creating a rules.Group requires already
+// passing in rules.ManagerOptions options (which in turn require a
+// notifier, appender, etc.), which we do not want to create simply
+// for parsing. On the other hand, we should not return barebones
+// rulefmt.RuleGroup sets here either, as only a fully-converted rules.Rule
+// is able to track alert states over multiple rule evaluations. The caller
+// would otherwise have to ensure to convert the rulefmt.RuleGroup only exactly
+// once, not for every evaluation (or risk losing alert pending states). So
+// it's probably better to just return a set of rules.Rule here.
+func (c RulesConfig) Parse() (map[string][]rules.Rule, error) {
+	groups := map[string][]rules.Rule{}
+
 	for fn, content := range c {
-		stmts, err := promql.ParseStmts(content)
-		if err != nil {
-			return nil, fmt.Errorf("error parsing %s: %s", fn, err)
+		rgs, errs := rulefmt.Parse([]byte(content))
+		if errs != nil {
+			return nil, fmt.Errorf("error parsing %s: %v", fn, errs)
 		}
 
-		for _, stmt := range stmts {
-			var rule rules.Rule
+		for _, rg := range rgs.Groups {
+			rls := make([]rules.Rule, 0, len(rg.Rules))
+			for _, rl := range rg.Rules {
+				expr, err := promql.ParseExpr(rl.Expr)
+				if err != nil {
+					return nil, err
+				}
 
-			switch r := stmt.(type) {
-			case *promql.AlertStmt:
-				rule = rules.NewAlertingRule(r.Name, r.Expr, r.Duration, r.Labels, r.Annotations, util.Logger)
-
-			case *promql.RecordStmt:
-				rule = rules.NewRecordingRule(r.Name, r.Expr, r.Labels)
-
-			default:
-				return nil, fmt.Errorf("ruler.GetRules: unknown statement type")
+				if rl.Alert != "" {
+					rls = append(rls, rules.NewAlertingRule(
+						rl.Alert,
+						expr,
+						time.Duration(rl.For),
+						labels.FromMap(rl.Labels),
+						labels.FromMap(rl.Annotations),
+						log.With(util.Logger, "alert", rl.Alert),
+					))
+					continue
+				}
+				rls = append(rls, rules.NewRecordingRule(
+					rl.Record,
+					expr,
+					labels.FromMap(rl.Labels),
+				))
 			}
-			result = append(result, rule)
+
+			groups[rg.Name] = rls
 		}
 	}
-	return result, nil
+
+	return groups, nil
 }
 
 // VersionedRulesConfig is a RulesConfig together with a version.

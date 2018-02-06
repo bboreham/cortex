@@ -261,7 +261,7 @@ func buildNotifierConfig(rulerConfig *Config) (*config.Config, error) {
 	return promConfig, nil
 }
 
-func (r *Ruler) newGroup(ctx context.Context, rs []rules.Rule) (*rules.Group, error) {
+func (r *Ruler) newGroup(ctx context.Context, rls []rules.Rule) (*rules.Group, error) {
 	appendable := &appendableAppender{pusher: r.pusher, ctx: ctx}
 	userID, err := user.ExtractOrgID(ctx)
 	if err != nil {
@@ -280,8 +280,8 @@ func (r *Ruler) newGroup(ctx context.Context, rs []rules.Rule) (*rules.Group, er
 		Logger:      gklog.NewNopLogger(),
 		Registerer:  prometheus.DefaultRegisterer,
 	}
-	delay := 0 * time.Second // Unused, so 0 value is fine.
-	return rules.NewGroup("default", "none", delay, rs, opts), nil
+	interval := 0 * time.Second // Unused, so 0 value is fine.
+	return rules.NewGroup("default", "none", interval, rls, opts), nil
 }
 
 // sendAlerts implements a rules.NotifyFunc for a Notifier.
@@ -352,28 +352,31 @@ func (r *Ruler) getOrCreateNotifier(userID string) (*notifier.Manager, error) {
 }
 
 // Evaluate a list of rules in the given context.
-func (r *Ruler) Evaluate(ctx context.Context, rs []rules.Rule) {
+func (r *Ruler) Evaluate(ctx context.Context, rgs map[string][]rules.Rule) {
 	logger := util.WithContext(ctx, util.Logger)
-	level.Debug(logger).Log("msg", "evaluating rules...", "num_rules", len(rs))
+	level.Debug(logger).Log("msg", "evaluating rule groups...", "num_groups", len(rgs))
 	start := time.Now()
-	ctx, cancelTimeout := context.WithTimeout(ctx, r.groupTimeout)
-	g, err := r.newGroup(ctx, rs)
-	if err != nil {
-		level.Error(logger).Log("msg", "failed to create rule group", "err", err)
-		return
-	}
-	g.Eval(ctx, start)
-	if err := ctx.Err(); err == nil {
-		cancelTimeout() // release resources
-	} else {
-		level.Warn(util.Logger).Log("msg", "context error", "error", err)
+
+	for name, rg := range rgs {
+		ctx, cancelTimeout := context.WithTimeout(ctx, r.groupTimeout)
+		g, err := r.newGroup(ctx, rg)
+		if err != nil {
+			level.Error(logger).Log("msg", "error creating rule group", "group_name", name, "err", err)
+		}
+		g.Eval(ctx, start)
+		if err := ctx.Err(); err == nil {
+			cancelTimeout() // release resources
+		} else {
+			level.Warn(util.Logger).Log("msg", "context error", "error", err)
+		}
+
+		rulesProcessed.Add(float64(len(g.Rules())))
 	}
 
 	// The prometheus routines we're calling have their own instrumentation
 	// but, a) it's rule-based, not group-based, b) it's a summary, not a
 	// histogram, so we can't reliably aggregate.
 	evalDuration.Observe(time.Since(start).Seconds())
-	rulesProcessed.Add(float64(len(rs)))
 }
 
 // Stop stops the Ruler.
@@ -470,7 +473,7 @@ func (w *worker) Run() {
 		evalLatency.Observe(time.Since(item.scheduled).Seconds())
 		level.Debug(util.Logger).Log("msg", "processing item", "item", item)
 		ctx := user.InjectOrgID(context.Background(), item.userID)
-		w.ruler.Evaluate(ctx, item.rules)
+		w.ruler.Evaluate(ctx, item.ruleGroups)
 		w.scheduler.workItemDone(*item)
 		level.Debug(util.Logger).Log("msg", "item handed back to queue", "item", item)
 	}

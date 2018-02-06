@@ -79,17 +79,20 @@ func makeRulerConfig() configs.RulesConfig {
 	return configs.RulesConfig(map[string]string{
 		"filename.rules": makeString(`
 # Config no. %d.
-ALERT ScrapeFailed
-  IF          up != 1
-  FOR         10m
-  LABELS      { severity="warning" }
-  ANNOTATIONS {
-    summary = "Scrape of {{$labels.job}} (pod: {{$labels.instance}}) failed.",
-    description = "Prometheus cannot reach the /metrics page on the {{$labels.instance}} pod.",
-    impact = "We have no monitoring data for {{$labels.job}} - {{$labels.instance}}. At worst, it's completely down. At best, we cannot reliably respond to operational issues.",
-    dashboardURL = "$${base_url}/admin/prometheus/targets",
-  }
-		`),
+groups:
+- name: example
+  rules:
+  - alert: ScrapeFailed
+    expr: 'up != 1'
+    for: 10m
+    labels:
+      severity: warning
+    annotations:
+      summary: "Scrape of {{$labels.job}} (pod: {{$labels.instance}}) failed."
+      description: "Prometheus cannot reach the /metrics page on the {{$labels.instance}} pod."
+      impact: "We have no monitoring data for {{$labels.job}} - {{$labels.instance}}. At worst, it's completely down. At best, we cannot reliably respond to operational issues."
+      dashboardURL: "$${base_url}/admin/prometheus/targets"
+        `),
 	})
 }
 

@@ -6,11 +6,12 @@ import (
 	"sync"
 	"time"
 
+	"github.com/prometheus/prometheus/rules"
+
 	"github.com/go-kit/kit/log/level"
 	"github.com/jonboulle/clockwork"
 
 	"github.com/prometheus/client_golang/prometheus"
-	"github.com/prometheus/prometheus/rules"
 
 	"github.com/weaveworks/common/instrument"
 	"github.com/weaveworks/cortex/pkg/configs"
@@ -53,9 +54,9 @@ func init() {
 }
 
 type workItem struct {
-	userID    string
-	rules     []rules.Rule
-	scheduled time.Time
+	userID     string
+	ruleGroups map[string][]rules.Rule
+	scheduled  time.Time
 }
 
 // Key implements ScheduledItem
@@ -69,12 +70,12 @@ func (w workItem) Scheduled() time.Time {
 }
 
 // Defer returns a work item with updated rules, rescheduled to a later time.
-func (w workItem) Defer(interval time.Duration, currentRules []rules.Rule) workItem {
+func (w workItem) Defer(interval time.Duration, currentRules map[string][]rules.Rule) workItem {
 	return workItem{w.userID, currentRules, w.scheduled.Add(interval)}
 }
 
 func (w workItem) String() string {
-	return fmt.Sprintf("%s:%d@%s", w.userID, len(w.rules), w.scheduled.Format(timeLogFormat))
+	return fmt.Sprintf("%s:%d@%s", w.userID, len(w.ruleGroups), w.scheduled.Format(timeLogFormat))
 }
 
 type scheduler struct {
@@ -84,8 +85,8 @@ type scheduler struct {
 
 	pollInterval time.Duration // how often we check for new config
 
-	cfgs         map[string][]rules.Rule // all rules for all users
-	latestConfig configs.ID              // # of last update received from config
+	cfgs         map[string]map[string][]rules.Rule // all rules for all users
+	latestConfig configs.ID                         // # of last update received from config
 	sync.RWMutex
 
 	stop chan struct{}
@@ -99,7 +100,7 @@ func newScheduler(rulesAPI RulesAPI, evaluationInterval, pollInterval time.Durat
 		evaluationInterval: evaluationInterval,
 		pollInterval:       pollInterval,
 		q:                  NewSchedulingQueue(clockwork.NewRealClock()),
-		cfgs:               map[string][]rules.Rule{},
+		cfgs:               map[string]map[string][]rules.Rule{},
 
 		stop: make(chan struct{}),
 		done: make(chan struct{}),
@@ -183,7 +184,7 @@ func (s *scheduler) addNewConfigs(now time.Time, cfgs map[string]configs.Version
 	// TODO: instrument how many configs we have, both valid & invalid.
 	level.Debug(util.Logger).Log("msg", "adding configurations", "num_configs", len(cfgs))
 	for userID, config := range cfgs {
-		rules, err := config.Config.Parse()
+		ruleGroups, err := config.Config.Parse()
 		if err != nil {
 			// XXX: This means that if a user has a working configuration and
 			// they submit a broken one, we'll keep processing the last known
@@ -192,17 +193,17 @@ func (s *scheduler) addNewConfigs(now time.Time, cfgs map[string]configs.Version
 			level.Warn(util.Logger).Log("msg", "scheduler: invalid Cortex configuration", "user_id", userID, "err", err)
 			continue
 		}
-		level.Info(util.Logger).Log("msg", "scheduler: updating rules for user", "user_id", userID, "num_rules", len(rules), "is_deleted", config.IsDeleted())
+		level.Info(util.Logger).Log("msg", "scheduler: updating rules for user", "user_id", userID, "num_groups", len(ruleGroups), "is_deleted", config.IsDeleted())
 		s.Lock()
 		// if deleted remove from map, otherwise - update map
 		if config.IsDeleted() {
 			delete(s.cfgs, userID)
 		} else {
-			s.cfgs[userID] = rules
+			s.cfgs[userID] = ruleGroups
 		}
 		s.Unlock()
 		if !config.IsDeleted() {
-			s.addWorkItem(workItem{userID, rules, now})
+			s.addWorkItem(workItem{userID, ruleGroups, now})
 		}
 	}
 	configUpdates.Add(float64(len(cfgs)))
