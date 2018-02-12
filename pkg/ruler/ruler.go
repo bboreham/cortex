@@ -363,6 +363,7 @@ func (r *Ruler) Evaluate(ctx context.Context, rgs map[string][]rules.Rule) {
 		g, err := r.newGroup(ctx, rg)
 		if err != nil {
 			level.Error(logger).Log("msg", "error creating rule group", "group_name", name, "err", err)
+			continue
 		}
 		g.Eval(ctx, start)
 		if err := ctx.Err(); err == nil {
