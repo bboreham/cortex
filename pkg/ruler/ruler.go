@@ -54,8 +54,8 @@ var (
 	})
 	evalLatency = prometheus.NewHistogram(prometheus.HistogramOpts{
 		Namespace: "cortex",
-		Name:      "group_evaluation_latency_seconds",
-		Help:      "How far behind the target time each rule group executed.",
+		Name:      "groups_evaluation_latency_seconds",
+		Help:      "How far behind the target time each config's entire set of rule groups finished executing.",
 		Buckets:   []float64{.1, .25, .5, 1, 2.5, 5, 10, 25},
 	})
 )
@@ -351,13 +351,14 @@ func (r *Ruler) getOrCreateNotifier(userID string) (*notifier.Manager, error) {
 	return n.notifier, nil
 }
 
-// Evaluate a list of rules in the given context.
+// Evaluate a list of rule groups in the given context.
 func (r *Ruler) Evaluate(ctx context.Context, rgs map[string][]rules.Rule) {
 	logger := util.WithContext(ctx, util.Logger)
 	level.Debug(logger).Log("msg", "evaluating rule groups...", "num_groups", len(rgs))
-	start := time.Now()
 
 	for name, rg := range rgs {
+		start := time.Now()
+
 		ctx, cancelTimeout := context.WithTimeout(ctx, r.groupTimeout)
 		g, err := r.newGroup(ctx, rg)
 		if err != nil {
@@ -367,16 +368,16 @@ func (r *Ruler) Evaluate(ctx context.Context, rgs map[string][]rules.Rule) {
 		if err := ctx.Err(); err == nil {
 			cancelTimeout() // release resources
 		} else {
-			level.Warn(util.Logger).Log("msg", "context error", "error", err)
+			level.Warn(util.Logger).Log("msg", "context error", "error", err, "group_name", name)
 		}
 
 		rulesProcessed.Add(float64(len(g.Rules())))
-	}
 
-	// The prometheus routines we're calling have their own instrumentation
-	// but, a) it's rule-based, not group-based, b) it's a summary, not a
-	// histogram, so we can't reliably aggregate.
-	evalDuration.Observe(time.Since(start).Seconds())
+		// The prometheus routines we're calling have their own instrumentation
+		// but, a) it's rule-based, not group-based, b) it's a summary, not a
+		// histogram, so we can't reliably aggregate.
+		evalDuration.Observe(time.Since(start).Seconds())
+	}
 }
 
 // Stop stops the Ruler.
