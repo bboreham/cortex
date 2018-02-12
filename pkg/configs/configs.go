@@ -113,7 +113,8 @@ func (c RulesConfig) Parse() (map[string][]rules.Rule, error) {
 				))
 			}
 
-			groups[rg.Name] = rls
+			// Group names have to be unique in Prometheus, but only within one rules file.
+			groups[rg.Name+";"+fn] = rls
 		}
 	}
 
