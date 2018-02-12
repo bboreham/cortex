@@ -83,8 +83,8 @@ func (c RulesConfig) Parse() (map[string][]rules.Rule, error) {
 
 	for fn, content := range c {
 		rgs, errs := rulefmt.Parse([]byte(content))
-		if errs != nil {
-			return nil, fmt.Errorf("error parsing %s: %v", fn, errs)
+		if len(errs) > 0 {
+			return nil, fmt.Errorf("error parsing %s: %v", fn, errs[0])
 		}
 
 		for _, rg := range rgs.Groups {
