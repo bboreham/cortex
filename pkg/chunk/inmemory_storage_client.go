@@ -272,6 +272,8 @@ func (m *MockStorage) GetChunks(ctx context.Context, chunkSet []Chunk) ([]Chunk,
 	return result, nil
 }
 
+func (m *MockStorage) AnalyzeBucket(tableName, bucketHash string) error { return nil }
+
 type mockWriteBatch []struct {
 	tableName, hashValue string
 	rangeValue           []byte

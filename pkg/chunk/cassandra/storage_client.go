@@ -228,3 +228,5 @@ func (s *storageClient) getChunk(ctx context.Context, input chunk.Chunk) (chunk.
 	err := input.Decode(decodeContext, buf)
 	return input, err
 }
+
+func (a storageClient) AnalyzeBucket(tableName, bucketHash string) error { return nil }

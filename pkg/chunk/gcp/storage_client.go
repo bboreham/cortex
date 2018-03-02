@@ -272,3 +272,5 @@ func (s *storageClient) GetChunks(ctx context.Context, input []chunk.Chunk) ([]c
 
 	return output, nil
 }
+
+func (a storageClient) AnalyzeBucket(tableName, bucketHash string) error { return nil }
