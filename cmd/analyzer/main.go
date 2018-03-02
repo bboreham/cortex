@@ -36,15 +36,15 @@ func main() {
 	checkFatal(err)
 	defer chunkStore.Stop()
 
-	if flag.NArg() != 1 {
-		level.Error(util.Logger).Log("usage: analyzer <options> timestamp")
+	if flag.NArg() != 2 {
+		level.Error(util.Logger).Log("usage: analyzer <options> timestamp instance")
 	}
 
 	ts, err := time.Parse(time.RFC3339, flag.Arg(0))
 	checkFatal(err)
 	mt := model.TimeFromUnixNano(ts.UnixNano())
 
-	err = chunk.Analyze(chunkStore, schemaConfig, mt, mt, "2")
+	err = chunk.Analyze(chunkStore, schemaConfig, mt, mt, flag.Arg(1))
 	checkFatal(err)
 
 	//fmt.Printf("result: error %s %s\n", result.Err, result.Value)
