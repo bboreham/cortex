@@ -32,13 +32,11 @@ func (a storageClient) AnalyzeBucket(tableName, bucketHash string) error {
 		if err != nil {
 			return err
 		}
-		fmt.Printf("%d entries returned\n", resp.Len())
+		//fmt.Printf("%d entries returned\n", resp.Len())
 		for i := 0; i < resp.Len(); i++ {
-			fmt.Printf("%v: %v\n", resp.RangeValue(i), resp.Value(i))
+			// RangeValue is a sha; Value is the labelset
+			fmt.Printf("%s\n", resp.Value(i))
 			count++
-			if count > 100 {
-				return nil
-			}
 		}
 	}
 
