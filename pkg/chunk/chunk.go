@@ -41,8 +41,8 @@ type Chunk struct {
 	UserID      string            `json:"userID"`
 
 	// These fields will be in all chunks, including old ones.
-	From    model.Time   `json:"from"`
-	Through model.Time   `json:"through"`
+	From    int64        `json:"from"`
+	Through int64        `json:"through"`
 	Metric  model.Metric `json:"metric"`
 
 	// The hash is not written to the external storage either.  We use
@@ -62,7 +62,7 @@ type Chunk struct {
 }
 
 // NewChunk creates a new chunk
-func NewChunk(userID string, fp model.Fingerprint, metric model.Metric, c prom_chunk.Chunk, from, through model.Time) Chunk {
+func NewChunk(userID string, fp model.Fingerprint, metric model.Metric, c prom_chunk.Chunk, from, through int64) Chunk {
 	return Chunk{
 		Fingerprint: fp,
 		UserID:      userID,
@@ -121,8 +121,8 @@ func parseLegacyChunkID(userID, key string) (Chunk, error) {
 	return Chunk{
 		UserID:      userID,
 		Fingerprint: model.Fingerprint(fingerprint),
-		From:        model.Time(from),
-		Through:     model.Time(through),
+		From:        from,
+		Through:     through,
 	}, nil
 }
 
@@ -155,8 +155,8 @@ func parseNewExternalKey(key string) (Chunk, error) {
 	return Chunk{
 		UserID:      userID,
 		Fingerprint: model.Fingerprint(fingerprint),
-		From:        model.Time(from),
-		Through:     model.Time(through),
+		From:        from,
+		Through:     through,
 		Checksum:    uint32(checksum),
 		ChecksumSet: true,
 	}, nil
@@ -325,7 +325,7 @@ func (c *Chunk) Decode(decodeContext *DecodeContext, input []byte) error {
 	})
 }
 
-func chunksToMatrix(ctx context.Context, chunks []Chunk, from, through model.Time) (model.Matrix, error) {
+func chunksToMatrix(ctx context.Context, chunks []Chunk, from, through int64) (model.Matrix, error) {
 	sp, ctx := ot.StartSpanFromContext(ctx, "chunksToMatrix")
 	defer sp.Finish()
 	sp.LogFields(otlog.Int("chunks", len(chunks)))
@@ -362,8 +362,8 @@ func chunksToMatrix(ctx context.Context, chunks []Chunk, from, through model.Tim
 }
 
 // Samples returns all SamplePairs for the chunk.
-func (c *Chunk) Samples(from, through model.Time) ([]model.SamplePair, error) {
+func (c *Chunk) Samples(from, through int64) ([]model.SamplePair, error) {
 	it := c.Data.NewIterator()
-	interval := metric.Interval{OldestInclusive: from, NewestInclusive: through}
+	interval := metric.Interval{OldestInclusive: model.Time(from), NewestInclusive: model.Time(through)}
 	return prom_chunk.RangeValues(it, interval)
 }

@@ -19,19 +19,19 @@ import (
 
 type mockSchema int
 
-func (mockSchema) GetWriteEntries(from, through model.Time, userID string, metricName model.LabelValue, labels model.Metric, chunkID string) ([]IndexEntry, error) {
+func (mockSchema) GetWriteEntries(from, through int64, userID string, metricName model.LabelValue, labels model.Metric, chunkID string) ([]IndexEntry, error) {
 	return nil, nil
 }
-func (mockSchema) GetReadQueries(from, through model.Time, userID string) ([]IndexQuery, error) {
+func (mockSchema) GetReadQueries(from, through int64, userID string) ([]IndexQuery, error) {
 	return nil, nil
 }
-func (mockSchema) GetReadQueriesForMetric(from, through model.Time, userID string, metricName model.LabelValue) ([]IndexQuery, error) {
+func (mockSchema) GetReadQueriesForMetric(from, through int64, userID string, metricName model.LabelValue) ([]IndexQuery, error) {
 	return nil, nil
 }
-func (mockSchema) GetReadQueriesForMetricLabel(from, through model.Time, userID string, metricName model.LabelValue, labelName model.LabelName) ([]IndexQuery, error) {
+func (mockSchema) GetReadQueriesForMetricLabel(from, through int64, userID string, metricName model.LabelValue, labelName model.LabelName) ([]IndexQuery, error) {
 	return nil, nil
 }
-func (mockSchema) GetReadQueriesForMetricLabelValue(from, through model.Time, userID string, metricName model.LabelValue, labelName model.LabelName, labelValue model.LabelValue) ([]IndexQuery, error) {
+func (mockSchema) GetReadQueriesForMetricLabelValue(from, through int64, userID string, metricName model.LabelValue, labelName model.LabelName, labelValue model.LabelValue) ([]IndexQuery, error) {
 	return nil, nil
 }
 
@@ -78,10 +78,10 @@ func TestSchemaHashKeys(t *testing.T) {
 		IndexTables: PeriodicTableConfig{
 			Prefix: periodicPrefix,
 			Period: 2 * 24 * time.Hour,
-			From:   util.NewDayValue(model.TimeFromUnix(5 * 24 * 60 * 60)),
+			From:   util.NewDayValue(5 * 24 * 60 * 60 * 1000),
 		},
 	}
-	compositeSchema := func(dailyBucketsFrom model.Time) Schema {
+	compositeSchema := func(dailyBucketsFrom int64) Schema {
 		cfgCp := cfg
 		cfgCp.DailyBucketsFrom = util.NewDayValue(dailyBucketsFrom)
 		schema, err := newCompositeSchema(cfgCp)
@@ -137,7 +137,7 @@ func TestSchemaHashKeys(t *testing.T) {
 
 		// Buckets are by hour until we reach the `dailyBucketsFrom`, after which they are by day.
 		{
-			compositeSchema(model.TimeFromUnix(0).Add(1 * 24 * time.Hour)),
+			compositeSchema(1 * msInDay),
 			0, (3 * 24 * 60 * 60) - 1, "foo",
 			mergeResults(
 				mkResult(table, "userid:%d:foo", 0, 1*24),
@@ -147,7 +147,7 @@ func TestSchemaHashKeys(t *testing.T) {
 
 		// Only the day part of `dailyBucketsFrom` matters, not the time part.
 		{
-			compositeSchema(model.TimeFromUnix(0).Add(2*24*time.Hour) - 1),
+			compositeSchema(2*msInDay - 1),
 			0, (3 * 24 * 60 * 60) - 1, "foo",
 			mergeResults(
 				mkResult(table, "userid:%d:foo", 0, 1*24),
@@ -157,28 +157,28 @@ func TestSchemaHashKeys(t *testing.T) {
 
 		// Moving dailyBucketsFrom to the previous day compared to the above makes 24 1-hour buckets disappear.
 		{
-			compositeSchema(model.TimeFromUnix(0).Add(1*24*time.Hour) - 1),
+			compositeSchema(1*msInDay - 1),
 			0, (3 * 24 * 60 * 60) - 1, "foo",
 			mkResult(table, "userid:d%d:foo", 0, 3),
 		},
 
 		// If `dailyBucketsFrom` is after the interval, everything will be bucketed by hour.
 		{
-			compositeSchema(model.TimeFromUnix(0).Add(99 * 24 * time.Hour)),
+			compositeSchema(99 * msInDay),
 			0, (2 * 24 * 60 * 60) - 1, "foo",
 			mkResult(table, "userid:%d:foo", 0, 2*24),
 		},
 
 		// Should only return daily buckets when dailyBucketsFrom is before the interval.
 		{
-			compositeSchema(model.TimeFromUnix(0)),
+			compositeSchema(0),
 			1 * 24 * 60 * 60, (3 * 24 * 60 * 60) - 1, "foo",
 			mkResult(table, "userid:d%d:foo", 1, 3),
 		},
 
 		// Basic weekly- ables.
 		{
-			compositeSchema(model.TimeFromUnix(0)),
+			compositeSchema(0),
 			5 * 24 * 60 * 60, (10 * 24 * 60 * 60) - 1, "foo",
 			mergeResults(
 				mkResult(periodicPrefix+"2", "userid:d%d:foo", 5, 6),
@@ -189,7 +189,7 @@ func TestSchemaHashKeys(t *testing.T) {
 
 		// Daily buckets + weekly tables.
 		{
-			compositeSchema(model.TimeFromUnix(0)),
+			compositeSchema(0),
 			0, (10 * 24 * 60 * 60) - 1, "foo",
 			mergeResults(
 				mkResult(table, "userid:d%d:foo", 0, 5),
@@ -201,7 +201,7 @@ func TestSchemaHashKeys(t *testing.T) {
 
 		// Houly Buckets, then daily buckets, then weekly tables.
 		{
-			compositeSchema(model.TimeFromUnix(2 * 24 * 60 * 60)),
+			compositeSchema(2 * msInDay),
 			0, (10 * 24 * 60 * 60) - 1, "foo",
 			mergeResults(
 				mkResult(table, "userid:%d:foo", 0, 2*24),
@@ -214,7 +214,7 @@ func TestSchemaHashKeys(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("TestSchemaHashKeys[%d]", i), func(t *testing.T) {
 			have, err := tc.Schema.GetWriteEntries(
-				model.TimeFromUnix(tc.from), model.TimeFromUnix(tc.through),
+				tc.from*1000, tc.through*1000,
 				userID, model.LabelValue(tc.metricName),
 				metric, chunkID,
 			)
@@ -475,7 +475,7 @@ func TestSchemaRangeKey(t *testing.T) {
 	} {
 		t.Run(fmt.Sprintf("TestSchameRangeKey[%d]", i), func(t *testing.T) {
 			have, err := tc.Schema.GetWriteEntries(
-				model.TimeFromUnix(0), model.TimeFromUnix(60*60)-1,
+				0, msInHour-1,
 				userID, model.LabelValue(metricName),
 				metric, chunkID,
 			)

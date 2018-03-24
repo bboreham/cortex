@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/pkg/errors"
 	"github.com/prometheus/common/model"
@@ -15,8 +14,9 @@ import (
 )
 
 const userID = "userID"
+const nowTS int64 = 1521894448000 // arbitrary fixed time for testing
 
-func dummyChunk(now model.Time) Chunk {
+func dummyChunk(now int64) Chunk {
 	return dummyChunkFor(now, model.Metric{
 		model.MetricNameLabel: "foo",
 		"bar":  "baz",
@@ -24,14 +24,14 @@ func dummyChunk(now model.Time) Chunk {
 	})
 }
 
-func dummyChunkFor(now model.Time, metric model.Metric) Chunk {
-	cs, _ := chunk.New().Add(model.SamplePair{Timestamp: now, Value: 0})
+func dummyChunkFor(now int64, metric model.Metric) Chunk {
+	cs, _ := chunk.New().Add(model.SamplePair{Timestamp: model.Time(now), Value: 0})
 	chunk := NewChunk(
 		userID,
 		metric.Fingerprint(),
 		metric,
 		cs[0],
-		now.Add(-time.Hour),
+		now-msInHour,
 		now,
 	)
 	// Force checksum calculation.
@@ -43,7 +43,7 @@ func dummyChunkFor(now model.Time, metric model.Metric) Chunk {
 }
 
 func TestChunkCodec(t *testing.T) {
-	dummy := dummyChunk(model.Now())
+	dummy := dummyChunk(nowTS)
 	decodeContext := NewDecodeContext()
 	for i, c := range []struct {
 		chunk Chunk
@@ -111,15 +111,15 @@ func TestParseExternalKey(t *testing.T) {
 		{key: "2:1484661279394:1484664879394", chunk: Chunk{
 			UserID:      userID,
 			Fingerprint: model.Fingerprint(2),
-			From:        model.Time(1484661279394),
-			Through:     model.Time(1484664879394),
+			From:        int64(1484661279394),
+			Through:     int64(1484664879394),
 		}},
 
 		{key: userID + "/2:270d8f00:270d8f00:f84c5745", chunk: Chunk{
 			UserID:      userID,
 			Fingerprint: model.Fingerprint(2),
-			From:        model.Time(655200000),
-			Through:     model.Time(655200000),
+			From:        int64(655200000),
+			Through:     int64(655200000),
 			ChecksumSet: true,
 			Checksum:    4165752645,
 		}},
@@ -139,7 +139,7 @@ func TestChunksToMatrix(t *testing.T) {
 		"bar":  "baz",
 		"toms": "code",
 	}
-	now := model.Now()
+	now := nowTS
 	chunk1 := dummyChunkFor(now, metric)
 	chunk1Samples, err := chunk1.Samples(chunk1.From, chunk1.Through)
 	require.NoError(t, err)
@@ -195,7 +195,7 @@ func TestChunksToMatrix(t *testing.T) {
 	}
 }
 
-func benchmarkChunk(now model.Time) Chunk {
+func benchmarkChunk(now int64) Chunk {
 	// This is a real example from Kubernetes' embedded cAdvisor metrics, lightly obfuscated
 	return dummyChunkFor(now, model.Metric{
 		model.MetricNameLabel:              "container_cpu_usage_seconds_total",
@@ -219,7 +219,7 @@ func benchmarkChunk(now model.Time) Chunk {
 }
 
 func BenchmarkEncode(b *testing.B) {
-	chunk := dummyChunk(model.Now())
+	chunk := dummyChunk(nowTS)
 
 	b.ResetTimer()
 
@@ -233,7 +233,7 @@ func BenchmarkDecode100(b *testing.B)   { benchmarkDecode(b, 100) }
 func BenchmarkDecode10000(b *testing.B) { benchmarkDecode(b, 10000) }
 
 func benchmarkDecode(b *testing.B, batchSize int) {
-	chunk := benchmarkChunk(model.Now())
+	chunk := benchmarkChunk(nowTS)
 	buf, err := chunk.Encode()
 	require.NoError(b, err)
 

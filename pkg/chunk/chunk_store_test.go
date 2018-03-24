@@ -6,7 +6,6 @@ import (
 	"reflect"
 	"sort"
 	"testing"
-	"time"
 
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/pkg/labels"
@@ -19,6 +18,11 @@ import (
 
 	"github.com/weaveworks/common/test"
 	"github.com/weaveworks/common/user"
+)
+
+const (
+	msInHour = 3600 * 1000
+	msInDay  = 24 * 3600 * 1000
 )
 
 // newTestStore creates a new Store for testing.
@@ -61,7 +65,7 @@ func (bfp ByFingerprint) Less(i, j int) bool {
 // TestChunkStore_Get tests results are returned correctly depending on the type of query
 func TestChunkStore_Get(t *testing.T) {
 	ctx := user.InjectOrgID(context.Background(), userID)
-	now := model.Now()
+	now := nowTS
 
 	fooMetric1 := model.Metric{
 		model.MetricNameLabel: "foo",
@@ -217,18 +221,18 @@ func TestChunkStore_Get(t *testing.T) {
 				}
 
 				// Query with ordinary time-range
-				matrix1, err := store.Get(ctx, now.Add(-time.Hour), now, matchers...)
+				matrix1, err := store.Get(ctx, now-msInHour, now, matchers...)
 				require.NoError(t, err)
 
 				sort.Sort(ByFingerprint(matrix1))
 				if !reflect.DeepEqual(tc.expect, matrix1) {
 					t.Fatalf("jml\nstart = %#v\nnow = %#v\nfooChunk1 = %#v\nfooChunk2 = %#v\nbarChunk1 = %#v\nbarChunk2 = %#v\n",
-						now.Add(-time.Hour), now, fooChunk1, fooChunk2, barChunk1, barChunk2)
+						now-msInHour, now, fooChunk1, fooChunk2, barChunk1, barChunk2)
 					t.Fatalf("%s: wrong chunks - %s", tc.query, test.Diff(tc.expect, matrix1))
 				}
 
 				// Pushing end of time-range into future should yield exact same resultset
-				matrix2, err := store.Get(ctx, now.Add(-time.Hour), now.Add(time.Hour*24*30), matchers...)
+				matrix2, err := store.Get(ctx, now-msInHour, now+msInDay*30, matchers...)
 				require.NoError(t, err)
 
 				sort.Sort(ByFingerprint(matrix2))
@@ -237,7 +241,7 @@ func TestChunkStore_Get(t *testing.T) {
 				}
 
 				// Query with both begin & end of time-range in future should yield empty resultset
-				matrix3, err := store.Get(ctx, now.Add(time.Hour), now.Add(time.Hour*2), matchers...)
+				matrix3, err := store.Get(ctx, now+msInHour, now+msInHour*2, matchers...)
 				require.NoError(t, err)
 				if len(matrix3) != 0 {
 					t.Fatalf("%s: future query should yield empty resultset ... actually got %v chunks: %#v",
@@ -251,7 +255,7 @@ func TestChunkStore_Get(t *testing.T) {
 // TestChunkStore_getMetricNameChunks tests if chunks are fetched correctly when we have the metric name
 func TestChunkStore_getMetricNameChunks(t *testing.T) {
 	ctx := user.InjectOrgID(context.Background(), userID)
-	now := model.Now()
+	now := nowTS
 	metricName := "foo"
 	chunk1 := dummyChunkFor(now, model.Metric{
 		model.MetricNameLabel: "foo",
@@ -340,7 +344,7 @@ func TestChunkStore_getMetricNameChunks(t *testing.T) {
 					t.Fatal(err)
 				}
 
-				chunks, err := store.getMetricNameChunks(ctx, now.Add(-time.Hour), now, tc.matchers, metricName)
+				chunks, err := store.getMetricNameChunks(ctx, now-msInHour, now, tc.matchers, metricName)
 				require.NoError(t, err)
 
 				if !reflect.DeepEqual(tc.expect, chunks) {
@@ -383,11 +387,11 @@ func TestChunkStoreRandom(t *testing.T) {
 	}
 
 	// put 100 chunks from 0 to 99
-	const chunkLen = 13 * 3600 // in seconds
+	const chunkLen = 13 * 3600 * 1000 // in milliseconds
 	for i := 0; i < 100; i++ {
-		ts := model.TimeFromUnix(int64(i * chunkLen))
+		ts := int64(i * chunkLen)
 		chunks, _ := chunk.New().Add(model.SamplePair{
-			Timestamp: ts,
+			Timestamp: model.Time(ts),
 			Value:     model.SampleValue(float64(i)),
 		})
 		chunk := NewChunk(
@@ -399,7 +403,7 @@ func TestChunkStoreRandom(t *testing.T) {
 			},
 			chunks[0],
 			ts,
-			ts.Add(chunkLen*time.Second),
+			ts+chunkLen,
 		)
 		for _, s := range schemas {
 			err := s.store.Put(ctx, []Chunk{chunk})
@@ -413,14 +417,11 @@ func TestChunkStoreRandom(t *testing.T) {
 		end := start + rand.Int63n((100*chunkLen)-start)
 		assert.True(t, start < end)
 
-		startTime := model.TimeFromUnix(start)
-		endTime := model.TimeFromUnix(end)
-
 		metricNameLabel := mustNewLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo")
 		matchers := []*labels.Matcher{mustNewLabelMatcher(labels.MatchEqual, "bar", "baz")}
 
 		for _, s := range schemas {
-			chunks, err := s.store.getMetricNameChunks(ctx, startTime, endTime,
+			chunks, err := s.store.getMetricNameChunks(ctx, start, end,
 				matchers,
 				metricNameLabel.Value,
 			)
@@ -428,8 +429,8 @@ func TestChunkStoreRandom(t *testing.T) {
 
 			// We need to check that each chunk is in the time range
 			for _, chunk := range chunks {
-				assert.False(t, chunk.From.After(endTime))
-				assert.False(t, chunk.Through.Before(startTime))
+				assert.False(t, chunk.From > end)
+				assert.False(t, chunk.Through < start)
 				samples, err := chunk.Samples(chunk.From, chunk.Through)
 				assert.NoError(t, err)
 				assert.Equal(t, 1, len(samples))
@@ -451,11 +452,11 @@ func TestChunkStoreLeastRead(t *testing.T) {
 	})
 
 	// Put 24 chunks 1hr chunks in the store
-	const chunkLen = 60 // in seconds
+	const chunkLen = 60000 // in milliseconds
 	for i := 0; i < 24; i++ {
-		ts := model.TimeFromUnix(int64(i * chunkLen))
+		ts := int64(i * chunkLen)
 		chunks, _ := chunk.New().Add(model.SamplePair{
-			Timestamp: ts,
+			Timestamp: model.Time(ts),
 			Value:     model.SampleValue(float64(i)),
 		})
 		chunk := NewChunk(
@@ -467,7 +468,7 @@ func TestChunkStoreLeastRead(t *testing.T) {
 			},
 			chunks[0],
 			ts,
-			ts.Add(chunkLen*time.Second),
+			ts+chunkLen,
 		)
 		t.Logf("Loop %d", i)
 		err := store.Put(ctx, []Chunk{chunk})
@@ -480,13 +481,10 @@ func TestChunkStoreLeastRead(t *testing.T) {
 		end := int64(24 * chunkLen)
 		assert.True(t, start <= end)
 
-		startTime := model.TimeFromUnix(start)
-		endTime := model.TimeFromUnix(end)
-
 		metricNameLabel := mustNewLabelMatcher(labels.MatchEqual, model.MetricNameLabel, "foo")
 		matchers := []*labels.Matcher{mustNewLabelMatcher(labels.MatchEqual, "bar", "baz")}
 
-		chunks, err := store.getMetricNameChunks(ctx, startTime, endTime,
+		chunks, err := store.getMetricNameChunks(ctx, start, end,
 			matchers,
 			metricNameLabel.Value,
 		)
@@ -496,8 +494,8 @@ func TestChunkStoreLeastRead(t *testing.T) {
 
 		// We need to check that each chunk is in the time range
 		for _, chunk := range chunks {
-			assert.False(t, chunk.From.After(endTime))
-			assert.False(t, chunk.Through.Before(startTime))
+			assert.False(t, chunk.From > end)
+			assert.False(t, chunk.Through < start)
 			samples, err := chunk.Samples(chunk.From, chunk.Through)
 			assert.NoError(t, err)
 			assert.Equal(t, 1, len(samples))

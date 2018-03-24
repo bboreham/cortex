@@ -4,11 +4,9 @@ import (
 	"flag"
 	"net/url"
 	"time"
-
-	"github.com/prometheus/common/model"
 )
 
-const secondsInDay = 24 * 60 * 60
+const millisecondsInDay = 24 * 60 * 60 * 1000
 
 // Registerer is a thing that can RegisterFlags
 type Registerer interface {
@@ -22,24 +20,28 @@ func RegisterFlags(rs ...Registerer) {
 	}
 }
 
-// DayValue is a model.Time that can be used as a flag.
+// DayValue is a time value that can be used as a flag.
 // NB it only parses days!
 type DayValue struct {
-	model.Time
-	set bool
+	Time int64 // milliseconds since the epoch
+	set  bool
 }
 
 // NewDayValue makes a new DayValue; will round t down to the nearest midnight.
-func NewDayValue(t model.Time) DayValue {
+func NewDayValue(t int64) DayValue {
 	return DayValue{
-		Time: model.TimeFromUnix((t.Unix() / secondsInDay) * secondsInDay),
+		Time: (t / millisecondsInDay) * millisecondsInDay,
 		set:  true,
 	}
 }
 
+func (v DayValue) Unix() int64 {
+	return v.Time / 1000
+}
+
 // String implements flag.Value
 func (v DayValue) String() string {
-	return v.Time.Time().Format(time.RFC3339)
+	return time.Unix(v.Unix(), 0).Format(time.RFC3339)
 }
 
 // Set implements flag.Value
@@ -48,7 +50,7 @@ func (v *DayValue) Set(s string) error {
 	if err != nil {
 		return err
 	}
-	v.Time = model.TimeFromUnix(t.Unix())
+	v.Time = t.Unix() * 1000
 	v.set = true
 	return nil
 }

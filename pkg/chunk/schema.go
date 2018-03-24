@@ -30,13 +30,13 @@ var (
 // to write or read chunks from the external index.
 type Schema interface {
 	// When doing a write, use this method to return the list of entries you should write to.
-	GetWriteEntries(from, through model.Time, userID string, metricName model.LabelValue, labels model.Metric, chunkID string) ([]IndexEntry, error)
+	GetWriteEntries(from, through int64, userID string, metricName model.LabelValue, labels model.Metric, chunkID string) ([]IndexEntry, error)
 
 	// When doing a read, use these methods to return the list of entries you should query
-	GetReadQueries(from, through model.Time, userID string) ([]IndexQuery, error)
-	GetReadQueriesForMetric(from, through model.Time, userID string, metricName model.LabelValue) ([]IndexQuery, error)
-	GetReadQueriesForMetricLabel(from, through model.Time, userID string, metricName model.LabelValue, labelName model.LabelName) ([]IndexQuery, error)
-	GetReadQueriesForMetricLabelValue(from, through model.Time, userID string, metricName model.LabelValue, labelName model.LabelName, labelValue model.LabelValue) ([]IndexQuery, error)
+	GetReadQueries(from, through int64, userID string) ([]IndexQuery, error)
+	GetReadQueriesForMetric(from, through int64, userID string, metricName model.LabelValue) ([]IndexQuery, error)
+	GetReadQueriesForMetricLabel(from, through int64, userID string, metricName model.LabelValue, labelName model.LabelName) ([]IndexQuery, error)
+	GetReadQueriesForMetricLabelValue(from, through int64, userID string, metricName model.LabelValue, labelName model.LabelName, labelValue model.LabelValue) ([]IndexQuery, error)
 }
 
 // IndexQuery describes a query for entries
@@ -144,11 +144,11 @@ func v8Schema(cfg SchemaConfig) Schema {
 
 // schema implements Schema given a bucketing function and and set of range key callbacks
 type schema struct {
-	buckets func(from, through model.Time, userID string) []Bucket
+	buckets func(from, through int64, userID string) []Bucket
 	entries entries
 }
 
-func (s schema) GetWriteEntries(from, through model.Time, userID string, metricName model.LabelValue, labels model.Metric, chunkID string) ([]IndexEntry, error) {
+func (s schema) GetWriteEntries(from, through int64, userID string, metricName model.LabelValue, labels model.Metric, chunkID string) ([]IndexEntry, error) {
 	var result []IndexEntry
 
 	for _, bucket := range s.buckets(from, through, userID) {
@@ -161,7 +161,7 @@ func (s schema) GetWriteEntries(from, through model.Time, userID string, metricN
 	return result, nil
 }
 
-func (s schema) GetReadQueries(from, through model.Time, userID string) ([]IndexQuery, error) {
+func (s schema) GetReadQueries(from, through int64, userID string) ([]IndexQuery, error) {
 	var result []IndexQuery
 
 	buckets := s.buckets(from, through, userID)
@@ -175,7 +175,7 @@ func (s schema) GetReadQueries(from, through model.Time, userID string) ([]Index
 	return result, nil
 }
 
-func (s schema) GetReadQueriesForMetric(from, through model.Time, userID string, metricName model.LabelValue) ([]IndexQuery, error) {
+func (s schema) GetReadQueriesForMetric(from, through int64, userID string, metricName model.LabelValue) ([]IndexQuery, error) {
 	var result []IndexQuery
 
 	buckets := s.buckets(from, through, userID)
@@ -189,7 +189,7 @@ func (s schema) GetReadQueriesForMetric(from, through model.Time, userID string,
 	return result, nil
 }
 
-func (s schema) GetReadQueriesForMetricLabel(from, through model.Time, userID string, metricName model.LabelValue, labelName model.LabelName) ([]IndexQuery, error) {
+func (s schema) GetReadQueriesForMetricLabel(from, through int64, userID string, metricName model.LabelValue, labelName model.LabelName) ([]IndexQuery, error) {
 	var result []IndexQuery
 
 	buckets := s.buckets(from, through, userID)
@@ -203,7 +203,7 @@ func (s schema) GetReadQueriesForMetricLabel(from, through model.Time, userID st
 	return result, nil
 }
 
-func (s schema) GetReadQueriesForMetricLabelValue(from, through model.Time, userID string, metricName model.LabelValue, labelName model.LabelName, labelValue model.LabelValue) ([]IndexQuery, error) {
+func (s schema) GetReadQueriesForMetricLabelValue(from, through int64, userID string, metricName model.LabelValue, labelName model.LabelName, labelValue model.LabelValue) ([]IndexQuery, error) {
 	var result []IndexQuery
 
 	buckets := s.buckets(from, through, userID)

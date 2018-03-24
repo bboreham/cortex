@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"sort"
+	"time"
 
 	"github.com/go-kit/kit/log/level"
 	ot "github.com/opentracing/opentracing-go"
@@ -163,7 +164,7 @@ func (c *Store) calculateDynamoWrites(userID string, chunks []Chunk) (WriteBatch
 }
 
 // Get implements ChunkStore
-func (c *Store) Get(ctx context.Context, from, through model.Time, allMatchers ...*labels.Matcher) (model.Matrix, error) {
+func (c *Store) Get(ctx context.Context, from, through int64, allMatchers ...*labels.Matcher) (model.Matrix, error) {
 	sp, ctx := ot.StartSpanFromContext(ctx, "ChunkStore.Get")
 	defer sp.Finish()
 
@@ -171,14 +172,14 @@ func (c *Store) Get(ctx context.Context, from, through model.Time, allMatchers .
 		return nil, fmt.Errorf("invalid query, through < from (%d < %d)", through, from)
 	}
 
-	now := model.Now()
-	if from.After(now) {
+	now := time.Now().Unix() * 1000
+	if from > now {
 		// time-span start is in future ... regard as legal
 		level.Error(util.WithContext(ctx, util.Logger)).Log("msg", "whole timerange in future, yield empty resultset", "through", through, "from", from, "now", now)
 		return nil, nil
 	}
 
-	if through.After(now) {
+	if through > now {
 		// time-span end is in future ... regard as legal
 		level.Error(util.WithContext(ctx, util.Logger)).Log("msg", "adjusting end timerange from future to now", "old_through", through, "new_through", now)
 		through = now // Avoid processing future part - otherwise some schemas could fail with eg non-existent table gripes
@@ -194,7 +195,7 @@ func (c *Store) Get(ctx context.Context, from, through model.Time, allMatchers .
 	return c.getSeriesMatrix(ctx, from, through, matchers, metricNameMatcher)
 }
 
-func (c *Store) getMetricNameMatrix(ctx context.Context, from, through model.Time, allMatchers []*labels.Matcher, metricName string) (model.Matrix, error) {
+func (c *Store) getMetricNameMatrix(ctx context.Context, from, through int64, allMatchers []*labels.Matcher, metricName string) (model.Matrix, error) {
 	chunks, err := c.getMetricNameChunks(ctx, from, through, allMatchers, metricName)
 	if err != nil {
 		return nil, err
@@ -202,7 +203,7 @@ func (c *Store) getMetricNameMatrix(ctx context.Context, from, through model.Tim
 	return chunksToMatrix(ctx, chunks, from, through)
 }
 
-func (c *Store) getMetricNameChunks(ctx context.Context, from, through model.Time, allMatchers []*labels.Matcher, metricName string) ([]Chunk, error) {
+func (c *Store) getMetricNameChunks(ctx context.Context, from, through int64, allMatchers []*labels.Matcher, metricName string) ([]Chunk, error) {
 	logger := util.WithContext(ctx, util.Logger)
 	filters, matchers := util.SplitFiltersAndMatchers(allMatchers)
 	chunks, err := c.lookupChunksByMetricName(ctx, from, through, matchers, metricName)
@@ -298,7 +299,7 @@ func ProcessCacheResponse(chunks []Chunk, keys []string, bufs [][]byte) (found [
 	return
 }
 
-func (c *Store) getSeriesMatrix(ctx context.Context, from, through model.Time, allMatchers []*labels.Matcher, metricNameMatcher *labels.Matcher) (model.Matrix, error) {
+func (c *Store) getSeriesMatrix(ctx context.Context, from, through int64, allMatchers []*labels.Matcher, metricNameMatcher *labels.Matcher) (model.Matrix, error) {
 	// Get all series from the index
 	userID, err := user.ExtractOrgID(ctx)
 	if err != nil {
@@ -362,7 +363,7 @@ outer:
 	return chunksToMatrix(ctx, chunks, from, through)
 }
 
-func (c *Store) lookupChunksByMetricName(ctx context.Context, from, through model.Time, matchers []*labels.Matcher, metricName string) ([]Chunk, error) {
+func (c *Store) lookupChunksByMetricName(ctx context.Context, from, through int64, matchers []*labels.Matcher, metricName string) ([]Chunk, error) {
 	userID, err := user.ExtractOrgID(ctx)
 	if err != nil {
 		return nil, err

@@ -7,7 +7,6 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go/service/dynamodb"
-	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/require"
 	"github.com/weaveworks/common/mtime"
 
@@ -79,7 +78,7 @@ func TestTableManager(t *testing.T) {
 		IndexTables: PeriodicTableConfig{
 			Prefix: tablePrefix,
 			Period: tablePeriod,
-			From:   util.NewDayValue(model.TimeFromUnix(0)),
+			From:   util.NewDayValue(0),
 			ProvisionedWriteThroughput: write,
 			ProvisionedReadThroughput:  read,
 			InactiveWriteThroughput:    inactiveWrite,
@@ -89,7 +88,7 @@ func TestTableManager(t *testing.T) {
 		ChunkTables: PeriodicTableConfig{
 			Prefix: chunkTablePrefix,
 			Period: tablePeriod,
-			From:   util.NewDayValue(model.TimeFromUnix(0)),
+			From:   util.NewDayValue(0),
 			ProvisionedWriteThroughput: write,
 			ProvisionedReadThroughput:  read,
 			InactiveWriteThroughput:    inactiveWrite,

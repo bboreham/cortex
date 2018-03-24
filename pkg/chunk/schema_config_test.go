@@ -20,8 +20,8 @@ func TestHourlyBuckets(t *testing.T) {
 	}
 
 	type args struct {
-		from    model.Time
-		through model.Time
+		from    int64
+		through int64
 	}
 	tests := []struct {
 		name string
@@ -31,16 +31,16 @@ func TestHourlyBuckets(t *testing.T) {
 		{
 			"0 hour window",
 			args{
-				from:    model.TimeFromUnix(0),
-				through: model.TimeFromUnix(0),
+				from:    0,
+				through: 0,
 			},
 			[]Bucket{},
 		},
 		{
 			"30 minute window",
 			args{
-				from:    model.TimeFromUnix(0),
-				through: model.TimeFromUnix(1800),
+				from:    0,
+				through: 1800 * 1000,
 			},
 			[]Bucket{{
 				from:      0,
@@ -52,8 +52,8 @@ func TestHourlyBuckets(t *testing.T) {
 		{
 			"1 hour window",
 			args{
-				from:    model.TimeFromUnix(0),
-				through: model.TimeFromUnix(3600),
+				from:    0,
+				through: 3600 * 1000,
 			},
 			[]Bucket{{
 				from:      0,
@@ -65,8 +65,8 @@ func TestHourlyBuckets(t *testing.T) {
 		{
 			"window spanning 3 hours with non-zero start",
 			args{
-				from:    model.TimeFromUnix(900),
-				through: model.TimeFromUnix((2 * 3600) + 1800),
+				from:    900 * 1000,
+				through: ((2 * 3600) + 1800) * 1000,
 			},
 			[]Bucket{{
 				from:      900 * 1000,  // ms
@@ -106,8 +106,8 @@ func TestDailyBuckets(t *testing.T) {
 	}
 
 	type args struct {
-		from    model.Time
-		through model.Time
+		from    int64
+		through int64
 	}
 	tests := []struct {
 		name string
@@ -117,16 +117,16 @@ func TestDailyBuckets(t *testing.T) {
 		{
 			"0 day window",
 			args{
-				from:    model.TimeFromUnix(0),
-				through: model.TimeFromUnix(0),
+				from:    0,
+				through: 0,
 			},
 			[]Bucket{},
 		},
 		{
 			"6 hour window",
 			args{
-				from:    model.TimeFromUnix(0),
-				through: model.TimeFromUnix(6 * 3600),
+				from:    0,
+				through: (6 * 3600) * 1000,
 			},
 			[]Bucket{{
 				from:      0,
@@ -138,8 +138,8 @@ func TestDailyBuckets(t *testing.T) {
 		{
 			"1 day window",
 			args{
-				from:    model.TimeFromUnix(0),
-				through: model.TimeFromUnix(24 * 3600),
+				from:    0,
+				through: (24 * 3600) * 1000,
 			},
 			[]Bucket{{
 				from:      0,
@@ -151,8 +151,8 @@ func TestDailyBuckets(t *testing.T) {
 		{
 			"window spanning 3 days with non-zero start",
 			args{
-				from:    model.TimeFromUnix(6 * 3600),
-				through: model.TimeFromUnix((2 * 24 * 3600) + (12 * 3600)),
+				from:    (6 * 3600) * 1000,
+				through: ((2 * 24 * 3600) + (12 * 3600)) * 1000,
 			},
 			[]Bucket{{
 				from:      (6 * 3600) * 1000,  // ms
@@ -183,20 +183,20 @@ func TestDailyBuckets(t *testing.T) {
 
 func TestCompositeSchema(t *testing.T) {
 	type result struct {
-		from, through model.Time
+		from, through int64
 		schema        Schema
 	}
-	collect := func(results *[]result) func(from, through model.Time, schema Schema) ([]IndexEntry, error) {
-		return func(from, through model.Time, schema Schema) ([]IndexEntry, error) {
+	collect := func(results *[]result) func(from, through int64, schema Schema) ([]IndexEntry, error) {
+		return func(from, through int64, schema Schema) ([]IndexEntry, error) {
 			*results = append(*results, result{from, through, schema})
 			return nil, nil
 		}
 	}
 	cs := compositeSchema{
 		schemas: []compositeSchemaEntry{
-			{model.TimeFromUnix(0), mockSchema(1)},
-			{model.TimeFromUnix(100), mockSchema(2)},
-			{model.TimeFromUnix(200), mockSchema(3)},
+			{0, mockSchema(1)},
+			{100 * 1000, mockSchema(2)},
+			{200 * 1000, mockSchema(3)},
 		},
 	}
 
@@ -212,12 +212,12 @@ func TestCompositeSchema(t *testing.T) {
 		{
 			compositeSchema{
 				schemas: []compositeSchemaEntry{
-					{model.TimeFromUnix(0), mockSchema(1)},
+					{0, mockSchema(1)},
 				},
 			},
 			0, 10,
 			[]result{
-				{model.TimeFromUnix(0), model.TimeFromUnix(10), mockSchema(1)},
+				{0, 10 * 1000, mockSchema(1)},
 			},
 		},
 
@@ -225,7 +225,7 @@ func TestCompositeSchema(t *testing.T) {
 		{
 			compositeSchema{
 				schemas: []compositeSchemaEntry{
-					{model.TimeFromUnix(0), mockSchema(1)},
+					{0, mockSchema(1)},
 				},
 			},
 			-10, -9,
@@ -234,12 +234,12 @@ func TestCompositeSchema(t *testing.T) {
 		{
 			compositeSchema{
 				schemas: []compositeSchemaEntry{
-					{model.TimeFromUnix(0), mockSchema(1)},
+					{0, mockSchema(1)},
 				},
 			},
 			-10, 10,
 			[]result{
-				{model.TimeFromUnix(0), model.TimeFromUnix(10), mockSchema(1)},
+				{0, 10 * 1000, mockSchema(1)},
 			},
 		},
 
@@ -247,14 +247,14 @@ func TestCompositeSchema(t *testing.T) {
 		{
 			compositeSchema{
 				schemas: []compositeSchemaEntry{
-					{model.TimeFromUnix(0), mockSchema(1)},
-					{model.TimeFromUnix(100), mockSchema(2)},
+					{0, mockSchema(1)},
+					{100 * 1000, mockSchema(2)},
 				},
 			},
 			34, 165,
 			[]result{
-				{model.TimeFromUnix(34), model.TimeFromUnix(100) - 1, mockSchema(1)},
-				{model.TimeFromUnix(100), model.TimeFromUnix(165), mockSchema(2)},
+				{34 * 1000, 100*1000 - 1, mockSchema(1)},
+				{100 * 1000, 165 * 1000, mockSchema(2)},
 			},
 		},
 
@@ -262,15 +262,15 @@ func TestCompositeSchema(t *testing.T) {
 		{
 			compositeSchema{
 				schemas: []compositeSchemaEntry{
-					{model.TimeFromUnix(0), mockSchema(1)},
-					{model.TimeFromUnix(10), mockSchema(2)},
-					{model.TimeFromUnix(10), mockSchema(3)},
+					{0, mockSchema(1)},
+					{10 * 1000, mockSchema(2)},
+					{10 * 1000, mockSchema(3)},
 				},
 			},
 			0, 165,
 			[]result{
-				{model.TimeFromUnix(0), model.TimeFromUnix(10) - 1, mockSchema(1)},
-				{model.TimeFromUnix(10), model.TimeFromUnix(165), mockSchema(3)},
+				{0, 10*1000 - 1, mockSchema(1)},
+				{10 * 1000, 165 * 1000, mockSchema(3)},
 			},
 		},
 
@@ -278,45 +278,45 @@ func TestCompositeSchema(t *testing.T) {
 		{
 			cs, 34, 65,
 			[]result{
-				{model.TimeFromUnix(34), model.TimeFromUnix(65), mockSchema(1)},
+				{34 * 1000, 65 * 1000, mockSchema(1)},
 			},
 		},
 
 		{
 			cs, 244, 6785,
 			[]result{
-				{model.TimeFromUnix(244), model.TimeFromUnix(6785), mockSchema(3)},
+				{244 * 1000, 6785 * 1000, mockSchema(3)},
 			},
 		},
 
 		{
 			cs, 34, 165,
 			[]result{
-				{model.TimeFromUnix(34), model.TimeFromUnix(100) - 1, mockSchema(1)},
-				{model.TimeFromUnix(100), model.TimeFromUnix(165), mockSchema(2)},
+				{34 * 1000, 100*1000 - 1, mockSchema(1)},
+				{100 * 1000, 165 * 1000, mockSchema(2)},
 			},
 		},
 
 		{
 			cs, 151, 264,
 			[]result{
-				{model.TimeFromUnix(151), model.TimeFromUnix(200) - 1, mockSchema(2)},
-				{model.TimeFromUnix(200), model.TimeFromUnix(264), mockSchema(3)},
+				{151 * 1000, 200*1000 - 1, mockSchema(2)},
+				{200 * 1000, 264 * 1000, mockSchema(3)},
 			},
 		},
 
 		{
 			cs, 32, 264,
 			[]result{
-				{model.TimeFromUnix(32), model.TimeFromUnix(100) - 1, mockSchema(1)},
-				{model.TimeFromUnix(100), model.TimeFromUnix(200) - 1, mockSchema(2)},
-				{model.TimeFromUnix(200), model.TimeFromUnix(264), mockSchema(3)},
+				{32 * 1000, 100*1000 - 1, mockSchema(1)},
+				{100 * 1000, 200*1000 - 1, mockSchema(2)},
+				{200 * 1000, 264 * 1000, mockSchema(3)},
 			},
 		},
 	} {
 		t.Run(fmt.Sprintf("TestSchemaComposite[%d]", i), func(t *testing.T) {
 			have := []result{}
-			tc.cs.forSchemasIndexEntry(model.TimeFromUnix(tc.from), model.TimeFromUnix(tc.through), collect(&have))
+			tc.cs.forSchemasIndexEntry(tc.from*1000, tc.through*1000, collect(&have))
 			if !reflect.DeepEqual(tc.want, have) {
 				t.Fatalf("wrong schemas - %s", test.Diff(tc.want, have))
 			}

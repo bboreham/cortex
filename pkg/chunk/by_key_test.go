@@ -6,7 +6,6 @@ import (
 	"sort"
 	"testing"
 
-	"github.com/prometheus/common/model"
 	"github.com/stretchr/testify/assert"
 )
 
@@ -102,7 +101,7 @@ func TestNWayIntersect(t *testing.T) {
 }
 
 func BenchmarkByKeyLess(b *testing.B) {
-	now := model.Now()
+	now := nowTS
 	a := ByKey{dummyChunk(now), dummyChunk(now)}
 
 	b.ResetTimer()
@@ -119,7 +118,7 @@ func BenchmarkByKeySort10000(b *testing.B) { benchmarkByKeySort(b, 10000) }
 func benchmarkByKeySort(b *testing.B, batchSize int) {
 	chunks := []Chunk{}
 	for i := 0; i < batchSize; i++ {
-		chunk := dummyChunk(model.Now() + model.Time(rand.Intn(batchSize)))
+		chunk := dummyChunk(nowTS + int64(rand.Intn(batchSize)))
 		chunks = append(chunks, chunk)
 	}
 

@@ -3,6 +3,7 @@ package chunk
 import (
 	"flag"
 	"fmt"
+	"math"
 	"sort"
 	"strconv"
 	"time"
@@ -92,15 +93,15 @@ type Bucket struct {
 	hashKey   string
 }
 
-func (cfg SchemaConfig) hourlyBuckets(from, through model.Time, userID string) []Bucket {
+func (cfg SchemaConfig) hourlyBuckets(from, through int64, userID string) []Bucket {
 	var (
-		fromHour    = from.Unix() / secondsInHour
-		throughHour = through.Unix() / secondsInHour
+		fromHour    = from / millisecondsInHour
+		throughHour = through / millisecondsInHour
 		result      = []Bucket{}
 	)
 
 	// If through ends on the hour, don't include the upcoming hour
-	if through.Unix()%secondsInHour == 0 {
+	if through%millisecondsInHour == 0 {
 		throughHour--
 	}
 
@@ -117,15 +118,15 @@ func (cfg SchemaConfig) hourlyBuckets(from, through model.Time, userID string) [
 	return result
 }
 
-func (cfg SchemaConfig) dailyBuckets(from, through model.Time, userID string) []Bucket {
+func (cfg SchemaConfig) dailyBuckets(from, through int64, userID string) []Bucket {
 	var (
-		fromDay    = from.Unix() / secondsInDay
-		throughDay = through.Unix() / secondsInDay
+		fromDay    = from / millisecondsInDay
+		throughDay = through / millisecondsInDay
 		result     = []Bucket{}
 	)
 
 	// If through ends on 00:00 of the day, don't include the upcoming day
-	if through.Unix()%secondsInDay == 0 {
+	if through%millisecondsInDay == 0 {
 		throughDay--
 	}
 
@@ -276,10 +277,10 @@ func (cfg *PeriodicTableConfig) GetTags() Tags {
 }
 
 // TableFor calculates the table shard for a given point in time.
-func (cfg *PeriodicTableConfig) TableFor(t model.Time) string {
+func (cfg *PeriodicTableConfig) TableFor(t int64) string {
 	var (
-		periodSecs = int64(cfg.Period / time.Second)
-		table      = t.Unix() / periodSecs
+		periodMS = int64(cfg.Period / time.Millisecond)
+		table    = t / periodMS
 	)
 	return cfg.Prefix + strconv.Itoa(int(table))
 }
@@ -291,7 +292,7 @@ type compositeSchema struct {
 }
 
 type compositeSchemaEntry struct {
-	start model.Time
+	start int64
 	Schema
 }
 
@@ -341,7 +342,7 @@ func newCompositeSchema(cfg SchemaConfig) (Schema, error) {
 	return compositeSchema{schemas}, nil
 }
 
-func (c compositeSchema) forSchemasIndexQuery(from, through model.Time, callback func(from, through model.Time, schema Schema) ([]IndexQuery, error)) ([]IndexQuery, error) {
+func (c compositeSchema) forSchemasIndexQuery(from, through int64, callback func(from, through int64, schema Schema) ([]IndexQuery, error)) ([]IndexQuery, error) {
 	if len(c.schemas) == 0 {
 		return nil, nil
 	}
@@ -363,7 +364,7 @@ func (c compositeSchema) forSchemasIndexQuery(from, through model.Time, callback
 		return c.schemas[j].start > through
 	})
 
-	min := func(a, b model.Time) model.Time {
+	min := func(a, b int64) int64 {
 		if a < b {
 			return a
 		}
@@ -373,7 +374,7 @@ func (c compositeSchema) forSchemasIndexQuery(from, through model.Time, callback
 	start := from
 	result := []IndexQuery{}
 	for ; i < j; i++ {
-		nextSchemaStarts := model.Latest
+		var nextSchemaStarts int64 = math.MaxInt64
 		if i+1 < len(c.schemas) {
 			nextSchemaStarts = c.schemas[i+1].start
 		}
@@ -397,7 +398,7 @@ func (c compositeSchema) forSchemasIndexQuery(from, through model.Time, callback
 	return result, nil
 }
 
-func (c compositeSchema) forSchemasIndexEntry(from, through model.Time, callback func(from, through model.Time, schema Schema) ([]IndexEntry, error)) ([]IndexEntry, error) {
+func (c compositeSchema) forSchemasIndexEntry(from, through int64, callback func(from, through int64, schema Schema) ([]IndexEntry, error)) ([]IndexEntry, error) {
 	if len(c.schemas) == 0 {
 		return nil, nil
 	}
@@ -419,7 +420,7 @@ func (c compositeSchema) forSchemasIndexEntry(from, through model.Time, callback
 		return c.schemas[j].start > through
 	})
 
-	min := func(a, b model.Time) model.Time {
+	min := func(a, b int64) int64 {
 		if a < b {
 			return a
 		}
@@ -429,7 +430,7 @@ func (c compositeSchema) forSchemasIndexEntry(from, through model.Time, callback
 	start := from
 	result := []IndexEntry{}
 	for ; i < j; i++ {
-		nextSchemaStarts := model.Latest
+		var nextSchemaStarts int64 = math.MaxInt64
 		if i+1 < len(c.schemas) {
 			nextSchemaStarts = c.schemas[i+1].start
 		}
@@ -453,32 +454,32 @@ func (c compositeSchema) forSchemasIndexEntry(from, through model.Time, callback
 	return result, nil
 }
 
-func (c compositeSchema) GetWriteEntries(from, through model.Time, userID string, metricName model.LabelValue, labels model.Metric, chunkID string) ([]IndexEntry, error) {
-	return c.forSchemasIndexEntry(from, through, func(from, through model.Time, schema Schema) ([]IndexEntry, error) {
+func (c compositeSchema) GetWriteEntries(from, through int64, userID string, metricName model.LabelValue, labels model.Metric, chunkID string) ([]IndexEntry, error) {
+	return c.forSchemasIndexEntry(from, through, func(from, through int64, schema Schema) ([]IndexEntry, error) {
 		return schema.GetWriteEntries(from, through, userID, metricName, labels, chunkID)
 	})
 }
 
-func (c compositeSchema) GetReadQueries(from, through model.Time, userID string) ([]IndexQuery, error) {
-	return c.forSchemasIndexQuery(from, through, func(from, through model.Time, schema Schema) ([]IndexQuery, error) {
+func (c compositeSchema) GetReadQueries(from, through int64, userID string) ([]IndexQuery, error) {
+	return c.forSchemasIndexQuery(from, through, func(from, through int64, schema Schema) ([]IndexQuery, error) {
 		return schema.GetReadQueries(from, through, userID)
 	})
 }
 
-func (c compositeSchema) GetReadQueriesForMetric(from, through model.Time, userID string, metricName model.LabelValue) ([]IndexQuery, error) {
-	return c.forSchemasIndexQuery(from, through, func(from, through model.Time, schema Schema) ([]IndexQuery, error) {
+func (c compositeSchema) GetReadQueriesForMetric(from, through int64, userID string, metricName model.LabelValue) ([]IndexQuery, error) {
+	return c.forSchemasIndexQuery(from, through, func(from, through int64, schema Schema) ([]IndexQuery, error) {
 		return schema.GetReadQueriesForMetric(from, through, userID, metricName)
 	})
 }
 
-func (c compositeSchema) GetReadQueriesForMetricLabel(from, through model.Time, userID string, metricName model.LabelValue, labelName model.LabelName) ([]IndexQuery, error) {
-	return c.forSchemasIndexQuery(from, through, func(from, through model.Time, schema Schema) ([]IndexQuery, error) {
+func (c compositeSchema) GetReadQueriesForMetricLabel(from, through int64, userID string, metricName model.LabelValue, labelName model.LabelName) ([]IndexQuery, error) {
+	return c.forSchemasIndexQuery(from, through, func(from, through int64, schema Schema) ([]IndexQuery, error) {
 		return schema.GetReadQueriesForMetricLabel(from, through, userID, metricName, labelName)
 	})
 }
 
-func (c compositeSchema) GetReadQueriesForMetricLabelValue(from, through model.Time, userID string, metricName model.LabelValue, labelName model.LabelName, labelValue model.LabelValue) ([]IndexQuery, error) {
-	return c.forSchemasIndexQuery(from, through, func(from, through model.Time, schema Schema) ([]IndexQuery, error) {
+func (c compositeSchema) GetReadQueriesForMetricLabelValue(from, through int64, userID string, metricName model.LabelValue, labelName model.LabelName, labelValue model.LabelValue) ([]IndexQuery, error) {
+	return c.forSchemasIndexQuery(from, through, func(from, through int64, schema Schema) ([]IndexQuery, error) {
 		return schema.GetReadQueriesForMetricLabelValue(from, through, userID, metricName, labelName, labelValue)
 	})
 }
