@@ -25,6 +25,7 @@ type mockTable struct {
 }
 
 type mockItem struct {
+	hashValue  string
 	rangeValue []byte
 	value      []byte
 }
@@ -159,12 +160,21 @@ func (m *MockStorage) BatchWrite(ctx context.Context, batch WriteBatch) error {
 			}
 		}
 		items[i] = mockItem{
+			hashValue:  req.hashValue,
 			rangeValue: req.rangeValue,
 			value:      req.value,
 		}
 
 		table.items[req.hashValue] = items
 	}
+	return nil
+}
+
+func (m *MockStorage) BatchWriteNoRetry(ctx context.Context, batch WriteBatch) (retry WriteBatch, err error) {
+	return nil, nil
+}
+
+func (m *MockStorage) ScanTable(ctx context.Context, tableName string, callbacks []func(result ReadBatch)) error {
 	return nil
 }
 
@@ -313,6 +323,14 @@ func (b *mockWriteBatch) Add(tableName, hashValue string, rangeValue []byte, val
 	}{tableName, hashValue, rangeValue, value})
 }
 
+func (b *mockWriteBatch) AddDelete(tableName, hashValue string, rangeValue []byte) {
+	panic("TODO")
+}
+
+func (b mockWriteBatch) Len() int {
+	return len(b)
+}
+
 type mockReadBatch struct {
 	items []mockItem
 }
@@ -329,9 +347,24 @@ type mockReadBatchIter struct {
 	*mockReadBatch
 }
 
+func (b *mockWriteBatch) AddBatch(a WriteBatch) {
+	*b = append(*b, *a.(*mockWriteBatch)...)
+}
+
+func (b *mockWriteBatch) Take(undersizedOK bool) WriteBatch {
+	// Not a very full implementation - just return everything
+	ret := *b
+	*b = nil
+	return &ret
+}
+
 func (b *mockReadBatchIter) Next() bool {
 	b.index++
 	return b.index < len(b.items)
+}
+
+func (b mockReadBatchIter) HashValue() string {
+	return b.items[b.index].hashValue
 }
 
 func (b *mockReadBatchIter) RangeValue() []byte {

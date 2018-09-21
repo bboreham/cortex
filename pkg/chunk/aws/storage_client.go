@@ -264,7 +264,7 @@ func (a storageClient) BatchWrite(ctx context.Context, input chunk.WriteBatch) e
 		}
 
 		// If there are unprocessed items, retry those items.
-		if unprocessedItems != nil && unprocessedItems.(dynamoDBWriteBatch).Len() > 0 {
+		if unprocessedItems != nil && unprocessedItems.Len() > 0 {
 			backoff.Wait()
 			unprocessed.TakeReqs(unprocessedItems.(dynamoDBWriteBatch), -1)
 		} else {
@@ -827,6 +827,10 @@ func (b *dynamoDBReadResponseIterator) Next() bool {
 	return b.i < len(b.items)
 }
 
+func (b dynamoDBReadResponseIterator) HashValue() string {
+	return aws.StringValue(b.items[b.i][hashKey].S)
+}
+
 func (b *dynamoDBReadResponseIterator) RangeValue() []byte {
 	return b.items[b.i][rangeKey].B
 }
@@ -881,6 +885,31 @@ func (b dynamoDBWriteBatch) Add(tableName, hashValue string, rangeValue []byte, 
 			Item: item,
 		},
 	})
+}
+
+func (b dynamoDBWriteBatch) AddDelete(tableName, hashValue string, rangeValue []byte) {
+	b[tableName] = append(b[tableName], &dynamodb.WriteRequest{
+		DeleteRequest: &dynamodb.DeleteRequest{
+			Key: map[string]*dynamodb.AttributeValue{
+				hashKey:  {S: aws.String(hashValue)},
+				rangeKey: {B: rangeValue},
+			},
+		},
+	})
+}
+
+func (b dynamoDBWriteBatch) AddBatch(a chunk.WriteBatch) {
+	for tableName, reqs := range a.(dynamoDBWriteBatch) {
+		b[tableName] = append(b[tableName], reqs...)
+	}
+}
+
+func (b dynamoDBWriteBatch) Take(undersizedOK bool) chunk.WriteBatch {
+	var ret = dynamoDBWriteBatch{}
+	if b.Len() >= dynamoDBMaxWriteBatchSize || undersizedOK {
+		ret.TakeReqs(b, dynamoDBMaxWriteBatchSize)
+	}
+	return ret
 }
 
 // Fill 'b' with WriteRequests from 'from' until 'b' has at most max requests. Remove those requests from 'from'.
