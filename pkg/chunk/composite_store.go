@@ -12,6 +12,7 @@ import (
 type Store interface {
 	Put(ctx context.Context, chunks []Chunk) error
 	PutOne(ctx context.Context, from, through model.Time, chunk Chunk) error
+	IndexChunk(ctx context.Context, writer *Writer, chunk Chunk) error
 	Get(tx context.Context, from, through model.Time, matchers ...*labels.Matcher) ([]Chunk, error)
 	Stop()
 }
@@ -189,6 +190,12 @@ func (c compositeStore) Put(ctx context.Context, chunks []Chunk) error {
 func (c compositeStore) PutOne(ctx context.Context, from, through model.Time, chunk Chunk) error {
 	return c.forStores(from, through, func(from, through model.Time, store Store) error {
 		return store.PutOne(ctx, from, through, chunk)
+	})
+}
+
+func (c compositeStore) IndexChunk(ctx context.Context, writer *Writer, chunk Chunk) error {
+	return c.forStores(chunk.From, chunk.Through, func(from, through model.Time, store Store) error {
+		return store.IndexChunk(ctx, writer, chunk)
 	})
 }
 
