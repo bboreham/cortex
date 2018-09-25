@@ -56,7 +56,8 @@ func init() {
 
 // StoreConfig specifies config for a ChunkStore
 type StoreConfig struct {
-	CacheConfig cache.Config
+	CacheConfig  cache.Config
+	WriterConfig WriterConfig
 
 	MinChunkAge              time.Duration
 	QueryChunkLimit          int
@@ -68,6 +69,7 @@ type StoreConfig struct {
 // RegisterFlags adds the flags required to config this to the given FlagSet
 func (cfg *StoreConfig) RegisterFlags(f *flag.FlagSet) {
 	cfg.CacheConfig.RegisterFlags(f)
+	cfg.WriterConfig.RegisterFlags(f)
 	f.DurationVar(&cfg.MinChunkAge, "store.min-chunk-age", 0, "Minimum time between chunk update and being saved to the store.")
 	f.IntVar(&cfg.QueryChunkLimit, "store.query-chunk-limit", 2e6, "Maximum number of chunks that can be fetched in a single query.")
 	f.IntVar(&cfg.CardinalityCacheSize, "store.cardinality-cache-size", 0, "Size of in-memory cardinality cache, 0 to disable.")
@@ -82,6 +84,7 @@ type store struct {
 	storage StorageClient
 	schema  Schema
 	*Fetcher
+	writer *Writer
 }
 
 func newStore(cfg StoreConfig, schema Schema, storage StorageClient) (Store, error) {
@@ -89,12 +92,14 @@ func newStore(cfg StoreConfig, schema Schema, storage StorageClient) (Store, err
 	if err != nil {
 		return nil, err
 	}
+	writer := NewWriter(cfg.WriterConfig, storage)
 
 	return &store{
 		cfg:     cfg,
 		storage: storage,
 		schema:  schema,
 		Fetcher: fetcher,
+		writer:  writer,
 	}, nil
 }
 

@@ -60,6 +60,7 @@ func newSeriesStore(cfg StoreConfig, schema Schema, storage StorageClient) (Stor
 	if err != nil {
 		return nil, err
 	}
+	writer := NewWriter(cfg.WriterConfig, storage)
 
 	return &seriesStore{
 		store: store{
@@ -67,6 +68,7 @@ func newSeriesStore(cfg StoreConfig, schema Schema, storage StorageClient) (Stor
 			storage: storage,
 			schema:  schema,
 			Fetcher: fetcher,
+			writer:  writer,
 		},
 		cardinalityCache: cache.NewFifoCache("cardinality", cfg.CardinalityCacheSize, cfg.CardinalityCacheValidity),
 	}, nil
