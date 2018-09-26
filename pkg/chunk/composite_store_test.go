@@ -28,7 +28,7 @@ func (m mockStore) IndexChunk(ctx context.Context, chunk Chunk) error {
 	return nil
 }
 
-func (m mockStore) Scan(ctx context.Context, time model.Time, withValue bool, callbacks []func(result ReadBatch)) error {
+func (m mockStore) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error {
 	return nil
 }
 
@@ -184,11 +184,20 @@ func TestCompositeStore(t *testing.T) {
 type dummy struct {
 	version int
 
-	// Include nil-implementations of these interfaces so I don't have to stub out
-	// the methods.
 	StorageClient
-	Store
 }
+
+// Stub out Store interface
+func (dummy) Put(ctx context.Context, chunks []Chunk) error                           { return nil }
+func (dummy) PutOne(ctx context.Context, from, through model.Time, chunk Chunk) error { return nil }
+func (dummy) IndexChunk(ctx context.Context, chunk Chunk) error                       { return nil }
+func (dummy) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error {
+	return nil
+}
+func (dummy) Get(tx context.Context, from, through model.Time, matchers ...*labels.Matcher) ([]Chunk, error) {
+	return nil, nil
+}
+func (dummy) Stop() {}
 
 func dummySchema(from model.Time, version int) SchemaOpt {
 	return SchemaOpt{
