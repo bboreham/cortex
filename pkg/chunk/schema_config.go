@@ -31,6 +31,9 @@ type SchemaConfig struct {
 	V9SchemaFrom          util.DayValue
 	BigtableColumnKeyFrom util.DayValue
 
+	// Don't write any changes after this date
+	EndDate util.DayValue
+
 	// Master 'off-switch' for table capacity updates, e.g. when troubleshooting
 	ThroughputUpdatesDisabled bool
 
@@ -58,6 +61,7 @@ func (cfg *SchemaConfig) RegisterFlags(f *flag.FlagSet) {
 	f.Var(&cfg.V5SchemaFrom, "dynamodb.v5-schema-from", "The date (in the format YYYY-MM-DD) after which we enable v5 schema.")
 	f.Var(&cfg.V6SchemaFrom, "dynamodb.v6-schema-from", "The date (in the format YYYY-MM-DD) after which we enable v6 schema.")
 	f.Var(&cfg.V9SchemaFrom, "dynamodb.v9-schema-from", "The date (in the format YYYY-MM-DD) after which we enable v9 schema (Series indexing).")
+	f.Var(&cfg.EndDate, "schema.end-date", "The date (in the format YYYY-MM-DD) after which we do no writes")
 	f.Var(&cfg.BigtableColumnKeyFrom, "bigtable.column-key-from", "The date (in the format YYYY-MM-DD) after which we use bigtable column keys.")
 
 	f.BoolVar(&cfg.ThroughputUpdatesDisabled, "table-manager.throughput-updates-disabled", false, "If true, disable all changes to DB capacity")
@@ -92,6 +96,10 @@ type Bucket struct {
 }
 
 func (cfg SchemaConfig) hourlyBuckets(from, through model.Time, userID string) []Bucket {
+	if cfg.EndDate.IsSet() && through > cfg.EndDate.Time {
+		through = cfg.EndDate.Time
+	}
+
 	var (
 		fromHour    = from.Unix() / secondsInHour
 		throughHour = through.Unix() / secondsInHour
@@ -117,6 +125,10 @@ func (cfg SchemaConfig) hourlyBuckets(from, through model.Time, userID string) [
 }
 
 func (cfg SchemaConfig) dailyBuckets(from, through model.Time, userID string) []Bucket {
+	if cfg.EndDate.IsSet() && through > cfg.EndDate.Time {
+		through = cfg.EndDate.Time
+	}
+
 	var (
 		fromDay    = from.Unix() / secondsInDay
 		throughDay = through.Unix() / secondsInDay
