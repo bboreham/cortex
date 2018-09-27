@@ -4,6 +4,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/prometheus/common/model"
 )
@@ -130,7 +131,7 @@ func v6Schema(cfg SchemaConfig) Schema {
 func v9Schema(cfg SchemaConfig) Schema {
 	return schema{
 		cfg.dailyBuckets,
-		v9Entries{},
+		&v9Entries{},
 	}
 }
 
@@ -500,11 +501,33 @@ func (v6Entries) GetChunksForSeries(_ Bucket, _ []byte) ([]IndexQuery, error) {
 
 // v9Entries adds a layer of indirection between labels -> series -> chunks.
 type v9Entries struct {
+	hackMutex sync.Mutex
+	hackCache map[string]struct{}
 }
 
-func (v9Entries) GetWriteEntries(bucket Bucket, metricName model.LabelValue, labels model.Metric, chunkID string) ([]IndexEntry, error) {
+func (e *v9Entries) GetWriteEntries(bucket Bucket, metricName model.LabelValue, labels model.Metric, chunkID string) ([]IndexEntry, error) {
 	seriesID := sha256bytes(labels.String())
 	encodedThroughBytes := encodeTime(bucket.through)
+
+	hackKey := bucket.tableName + "\xff" + bucket.hashKey + "\xff" + string(seriesID)
+	e.hackMutex.Lock()
+	if e.hackCache == nil {
+		e.hackCache = make(map[string]struct{}, 1000000)
+	}
+	if _, exists := e.hackCache[hackKey]; exists {
+		e.hackMutex.Unlock()
+		return []IndexEntry{
+			// If the details for the series have already been issued,
+			// just return Entry for seriesID -> chunkID
+			{
+				TableName:  bucket.tableName,
+				HashValue:  bucket.hashKey + ":" + string(seriesID),
+				RangeValue: encodeRangeKey(encodedThroughBytes, nil, []byte(chunkID), chunkTimeRangeKeyV3),
+			},
+		}, nil
+	}
+	e.hackCache[hackKey] = struct{}{}
+	e.hackMutex.Unlock()
 
 	entries := []IndexEntry{
 		// Entry for metricName -> seriesID
@@ -539,7 +562,7 @@ func (v9Entries) GetWriteEntries(bucket Bucket, metricName model.LabelValue, lab
 	return entries, nil
 }
 
-func (v9Entries) GetReadMetricQueries(bucket Bucket, metricName model.LabelValue) ([]IndexQuery, error) {
+func (*v9Entries) GetReadMetricQueries(bucket Bucket, metricName model.LabelValue) ([]IndexQuery, error) {
 	return []IndexQuery{
 		{
 			TableName: bucket.tableName,
@@ -548,7 +571,7 @@ func (v9Entries) GetReadMetricQueries(bucket Bucket, metricName model.LabelValue
 	}, nil
 }
 
-func (v9Entries) GetReadMetricLabelQueries(bucket Bucket, metricName model.LabelValue, labelName model.LabelName) ([]IndexQuery, error) {
+func (*v9Entries) GetReadMetricLabelQueries(bucket Bucket, metricName model.LabelValue, labelName model.LabelName) ([]IndexQuery, error) {
 	return []IndexQuery{
 		{
 			TableName: bucket.tableName,
@@ -557,7 +580,7 @@ func (v9Entries) GetReadMetricLabelQueries(bucket Bucket, metricName model.Label
 	}, nil
 }
 
-func (v9Entries) GetReadMetricLabelValueQueries(bucket Bucket, metricName model.LabelValue, labelName model.LabelName, labelValue model.LabelValue) ([]IndexQuery, error) {
+func (*v9Entries) GetReadMetricLabelValueQueries(bucket Bucket, metricName model.LabelValue, labelName model.LabelName, labelValue model.LabelValue) ([]IndexQuery, error) {
 	valueHash := sha256bytes(string(labelValue))
 	return []IndexQuery{
 		{
@@ -569,7 +592,7 @@ func (v9Entries) GetReadMetricLabelValueQueries(bucket Bucket, metricName model.
 	}, nil
 }
 
-func (v9Entries) GetChunksForSeries(bucket Bucket, seriesID []byte) ([]IndexQuery, error) {
+func (*v9Entries) GetChunksForSeries(bucket Bucket, seriesID []byte) ([]IndexQuery, error) {
 	encodedFromBytes := encodeTime(bucket.from)
 	return []IndexQuery{
 		{
