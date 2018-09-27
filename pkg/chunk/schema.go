@@ -509,22 +509,23 @@ func (e *v9Entries) GetWriteEntries(bucket Bucket, metricName model.LabelValue, 
 	seriesID := sha256bytes(labels.String())
 	encodedThroughBytes := encodeTime(bucket.through)
 
+	// Entry for seriesID -> chunkID
+	chunkEntry := IndexEntry{
+		TableName:  bucket.tableName,
+		HashValue:  bucket.hashKey + ":" + string(seriesID),
+		RangeValue: encodeRangeKey(encodedThroughBytes, nil, []byte(chunkID), chunkTimeRangeKeyV3),
+	}
+
 	hackKey := bucket.tableName + "\xff" + bucket.hashKey + "\xff" + string(seriesID)
 	e.hackMutex.Lock()
 	if e.hackCache == nil {
 		e.hackCache = make(map[string]struct{}, 1000000)
 	}
 	if _, exists := e.hackCache[hackKey]; exists {
+		// If the details for the series have already been issued,
+		// just return Entry for seriesID -> chunkID
 		e.hackMutex.Unlock()
-		return []IndexEntry{
-			// If the details for the series have already been issued,
-			// just return Entry for seriesID -> chunkID
-			{
-				TableName:  bucket.tableName,
-				HashValue:  bucket.hashKey + ":" + string(seriesID),
-				RangeValue: encodeRangeKey(encodedThroughBytes, nil, []byte(chunkID), chunkTimeRangeKeyV3),
-			},
-		}, nil
+		return []IndexEntry{chunkEntry}, nil
 	}
 	e.hackCache[hackKey] = struct{}{}
 	e.hackMutex.Unlock()
@@ -536,12 +537,7 @@ func (e *v9Entries) GetWriteEntries(bucket Bucket, metricName model.LabelValue, 
 			HashValue:  bucket.hashKey + ":" + string(metricName),
 			RangeValue: encodeRangeKey(seriesID, nil, nil, seriesRangeKeyV1),
 		},
-		// Entry for seriesID -> chunkID
-		{
-			TableName:  bucket.tableName,
-			HashValue:  bucket.hashKey + ":" + string(seriesID),
-			RangeValue: encodeRangeKey(encodedThroughBytes, nil, []byte(chunkID), chunkTimeRangeKeyV3),
-		},
+		chunkEntry,
 	}
 
 	// Entries for metricName:labelName -> hash(value):seriesID
