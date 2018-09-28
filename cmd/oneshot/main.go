@@ -28,9 +28,11 @@ func main() {
 		storageConfig    storage.Config
 		querierConfig    querier.Config
 		loglevel         string
+		endTime          string
 	)
 	util.RegisterFlags(&chunkStoreConfig, &schemaConfig, &storageConfig, &querierConfig)
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
+	flag.StringVar(&endTime, "end-time", "", "Time of query in RFC3339 format; default to now")
 	flag.Parse()
 
 	var l logging.Level
@@ -56,8 +58,17 @@ func main() {
 		level.Error(util.Logger).Log("usage: oneshot <options> promql-query")
 	}
 
+	end := time.Now()
+	if endTime != "" {
+		end, err = time.Parse(time.RFC3339, endTime)
+		if err != nil {
+			level.Error(util.Logger).Log("msg", "error in -end-time", "err", err)
+			os.Exit(1)
+		}
+	}
+
 	// Now execute the query
-	query, err := engine.NewInstantQuery(queryable, flag.Arg(0), time.Now().Add(-time.Hour*24))
+	query, err := engine.NewInstantQuery(queryable, flag.Arg(0), end)
 	if err != nil {
 		level.Error(util.Logger).Log("error in query:", err)
 		os.Exit(1)
