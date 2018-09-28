@@ -8,9 +8,11 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/log/level"
+	ot "github.com/opentracing/opentracing-go"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/pkg/labels"
 	"github.com/weaveworks/common/logging"
+	"github.com/weaveworks/common/tracing"
 	"github.com/weaveworks/common/user"
 
 	"github.com/weaveworks/cortex/pkg/chunk"
@@ -34,6 +36,11 @@ func main() {
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&endTime, "end-time", "", "Time of query in RFC3339 format; default to now")
 	flag.Parse()
+
+	trace := tracing.NewFromEnv("oneshot")
+	defer trace.Close()
+	sp, ctx := ot.StartSpanFromContext(context.Background(), "oneshot")
+	defer sp.Finish()
 
 	var l logging.Level
 	l.Set(loglevel)
@@ -73,7 +80,7 @@ func main() {
 		level.Error(util.Logger).Log("error in query:", err)
 		os.Exit(1)
 	}
-	ctx := user.InjectOrgID(context.Background(), "2")
+	ctx = user.InjectOrgID(ctx, "2")
 
 	result := query.Exec(ctx)
 	fmt.Printf("result: error %s %s\n", result.Err, result.Value)
