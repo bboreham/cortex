@@ -215,7 +215,7 @@ func (c *Chunk) Encode() ([]byte, error) {
 
 	// Write the data length
 	dataLenBytes := [4]byte{}
-	binary.BigEndian.PutUint32(dataLenBytes[:], uint32(prom_chunk.ChunkLen))
+	binary.BigEndian.PutUint32(dataLenBytes[:], uint32(c.Data.MarshalLen()))
 	if _, err := buf.Write(dataLenBytes[:]); err != nil {
 		return nil, err
 	}

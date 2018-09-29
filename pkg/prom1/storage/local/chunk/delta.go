@@ -204,6 +204,11 @@ func (c *deltaEncodedChunk) NewIterator() Iterator {
 	})
 }
 
+// MarshalLen implements chunk.
+func (c deltaEncodedChunk) MarshalLen() int {
+	return cap(c)
+}
+
 // Marshal implements chunk.
 func (c deltaEncodedChunk) Marshal(w io.Writer) error {
 	if len(c) > math.MaxUint16 {

@@ -289,6 +289,8 @@ type Chunk interface {
 	// Len returns the number of samples in the chunk.  Implementations may be
 	// expensive.
 	Len() int
+	// MarshalLen returns the number of bytes that will be written by Marshal()
+	MarshalLen() int
 }
 
 // Iterator enables efficient access to the content of a chunk. It is
