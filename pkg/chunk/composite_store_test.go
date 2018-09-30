@@ -36,7 +36,8 @@ func (m mockStore) Get(tx context.Context, from, through model.Time, matchers ..
 	return nil, nil
 }
 
-func (m mockStore) Stop() {}
+func (m mockStore) Stop()  {}
+func (m mockStore) Flush() {}
 
 func TestCompositeStore(t *testing.T) {
 	type result struct {
@@ -197,7 +198,8 @@ func (dummy) Scan(ctx context.Context, from, through model.Time, withValue bool,
 func (dummy) Get(tx context.Context, from, through model.Time, matchers ...*labels.Matcher) ([]Chunk, error) {
 	return nil, nil
 }
-func (dummy) Stop() {}
+func (dummy) Flush() {}
+func (dummy) Stop()  {}
 
 func dummySchema(from model.Time, version int) SchemaOpt {
 	return SchemaOpt{
