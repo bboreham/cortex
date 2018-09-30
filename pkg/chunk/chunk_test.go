@@ -16,6 +16,10 @@ import (
 
 const userID = "userID"
 
+func init() {
+	chunk.DefaultEncoding = chunk.Varbit
+}
+
 func dummyChunk(now model.Time) Chunk {
 	return dummyChunkFor(now, model.Metric{
 		model.MetricNameLabel: "foo",
