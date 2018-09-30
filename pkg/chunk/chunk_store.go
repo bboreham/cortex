@@ -40,12 +40,18 @@ var (
 		Name:      "cache_corrupt_chunks_total",
 		Help:      "Total count of corrupt chunks found in cache.",
 	})
+	writerQueueLength = prometheus.NewGauge(prometheus.GaugeOpts{
+		Namespace: "cortex",
+		Name:      "writer_queue_length",
+		Help:      "Number of entries in the writer queue.",
+	})
 )
 
 func init() {
 	prometheus.MustRegister(indexEntriesPerChunk)
 	prometheus.MustRegister(rowWrites)
 	prometheus.MustRegister(cacheCorrupt)
+	prometheus.MustRegister(writerQueueLength)
 }
 
 // StoreConfig specifies config for a ChunkStore
