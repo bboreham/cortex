@@ -104,18 +104,19 @@ func (sc *Writer) writeLoop(ctx context.Context) {
 		if !ok {
 			return
 		}
-		level.Debug(util.Logger).Log("msg", "about to write", "num_requests", batch.Len())
+		batchLen := batch.Len()
+		level.Debug(util.Logger).Log("msg", "about to write", "num_requests", batchLen)
 		retry, err := sc.storage.BatchWriteNoRetry(ctx, batch)
 		if err != nil {
 			level.Error(util.Logger).Log("msg", "unable to write; dropping data", "err", err, "batch", batch)
-			sc.pending.Add(-batch.Len())
+			sc.pending.Add(-batchLen)
 			continue
 		}
 		// Send unprocessed items back into the batcher
 		sc.retry <- retry
-		sc.pending.Add(-(batch.Len() - retry.Len()))
+		sc.pending.Add(-(batchLen - retry.Len()))
 		// Wait before accepting the next batch
-		limiter.WaitN(ctx, batch.Len())
+		limiter.WaitN(ctx, batchLen)
 	}
 }
 
