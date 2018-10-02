@@ -236,7 +236,11 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 				}
 			} else {
 				if reEncodeChunks {
-					ch.ForceEncode()
+					err = ch.ForceEncode()
+					if err != nil {
+						level.Error(util.Logger).Log("msg", "forceencode error", "err", err)
+						continue
+					}
 				}
 				err = h.store.Put(ctx, []chunk.Chunk{ch})
 				if err != nil {
