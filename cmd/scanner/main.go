@@ -39,7 +39,9 @@ func main() {
 		storageConfig    storage.Config
 		chunkStoreConfig chunk.StoreConfig
 
-		orgsFile string
+		deleteOrgsFile string
+		includeOrgsStr string
+		reEncodeChunks bool
 
 		week      int64
 		segments  int
@@ -55,10 +57,12 @@ func main() {
 	flag.StringVar(&address, "address", ":6060", "Address to listen on, for profiling, etc.")
 	flag.Int64Var(&week, "week", 0, "Week number to scan, e.g. 2497 (0 means current week)")
 	flag.IntVar(&segments, "segments", 1, "Number of segments to read in parallel")
-	flag.StringVar(&orgsFile, "delete-orgs-file", "", "File containing IDs of orgs to delete")
+	flag.StringVar(&deleteOrgsFile, "delete-orgs-file", "", "File containing IDs of orgs to delete")
+	flag.StringVar(&includeOrgsStr, "include-orgs", "", "IDs of orgs to include (space-separated)")
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&rechunkTablePrefix, "dynamodb.rechunk-prefix", "", "Prefix of new chunk table (blank to disable)")
 	flag.StringVar(&reindexTablePrefix, "dynamodb.reindex-prefix", "", "Prefix of new index table (blank to disable)")
+	flag.StringVar(&reEncodeChunks, "re-encode-chunks", false, "Enable re-encoding of chunks to save on storing zeros")
 
 	flag.Parse()
 
@@ -72,14 +76,23 @@ func main() {
 		checkFatal(http.ListenAndServe(address, nil))
 	}()
 
-	orgs := map[int]struct{}{}
-	if orgsFile != "" {
-		content, err := ioutil.ReadFile(orgsFile)
+	deleteOrgs := map[int]struct{}{}
+	if deleteOrgsFile != "" {
+		content, err := ioutil.ReadFile(deleteOrgsFile)
 		checkFatal(err)
 		for _, arg := range strings.Fields(string(content)) {
 			org, err := strconv.Atoi(arg)
 			checkFatal(err)
-			orgs[org] = struct{}{}
+			deleteOrgs[org] = struct{}{}
+		}
+	}
+
+	includeOrgs := map[int]struct{}{}
+	if includeOrgsStr != "" {
+		for _, arg := range strings.Fields(includeOrgsStr) {
+			org, err := strconv.Atoi(arg)
+			checkFatal(err)
+			includeOrgs[org] = struct{}{}
 		}
 	}
 
@@ -112,7 +125,7 @@ func main() {
 	handlers := make([]handler, segments)
 	callbacks := make([]func(result chunk.ReadBatch), segments)
 	for segment := 0; segment < segments; segment++ {
-		handlers[segment] = newHandler(reindexStore, rechunkTablePrefix, reindexTablePrefix, orgs)
+		handlers[segment] = newHandler(reindexStore, rechunkTablePrefix, reindexTablePrefix, includeOrgs, deleteOrgs)
 		callbacks[segment] = handlers[segment].handlePage
 	}
 
@@ -130,24 +143,33 @@ func main() {
 /* TODO: delete v8 schema rows for all instances */
 
 type summary struct {
-	counts map[int]int
+	// Map from instance to (metric->count)
+	counts map[int]map[string]int
 }
 
 func newSummary() summary {
 	return summary{
-		counts: map[int]int{},
+		counts: map[int]map[string]int{},
 	}
 }
 
 func (s *summary) accumulate(b summary) {
-	for k, v := range b.counts {
-		s.counts[k] += v
+	for instance, m := range b.counts {
+		if s.counts[instance] == nil {
+			s.counts[instance] = make(map[string]int)
+		}
+		for metric, c := range m {
+			s.counts[instance][metric] += c
+		}
 	}
 }
 
 func (s summary) print() {
-	for user, count := range s.counts {
-		fmt.Printf("%d, %d\n", user, count)
+	for instance, m := range s.counts {
+		fmt.Printf("%d: %d\n", instance, len(m))
+		for metric, c := range m {
+			fmt.Printf("%d, %s, %d\n", instance, metric, c)
+		}
 	}
 }
 
@@ -155,16 +177,21 @@ type handler struct {
 	store              chunk.Store
 	tableName          string
 	pages              int
-	orgs               map[int]struct{}
+	includeOrgs        map[int]struct{}
+	deleteOrgs         map[int]struct{}
 	reindexTablePrefix string
 	summary
 }
 
-func newHandler(store chunk.Store, tableName string, reindexTablePrefix string, orgs map[int]struct{}) handler {
+func newHandler(store chunk.Store, tableName string, reindexTablePrefix string, includeOrgs map[int]struct{}, deleteOrgs map[int]struct{}) handler {
+	if len(includeOrgs) == 0 {
+		includeOrgs = nil
+	}
 	return handler{
 		store:              store,
 		tableName:          tableName,
-		orgs:               orgs,
+		includeOrgs:        includeOrgs,
+		deleteOrgs:         deleteOrgs,
 		summary:            newSummary(),
 		reindexTablePrefix: reindexTablePrefix,
 	}
@@ -180,8 +207,16 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		if org <= 0 {
 			continue
 		}
-		h.counts[org]++
-		if _, found := h.orgs[org]; found {
+		if h.includeOrgs != nil {
+			if _, found := h.includeOrgs[org]; !found {
+				continue
+			}
+		}
+		if h.counts[org] == nil {
+			h.counts[org] = make(map[string]int)
+		}
+		h.counts[org][""]++
+		if _, found := h.deleteOrgs[org]; found {
 			//request := h.storageClient.NewWriteBatch()
 			//request.AddDelete(h.tableName, hashValue, page.RangeValue(i))
 			//			h.requests <- request
@@ -192,6 +227,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 				level.Error(util.Logger).Log("msg", "chunk decode error", "err", err)
 				continue
 			}
+			h.counts[org][string(ch.Metric[model.MetricNameLabel])]++
 			if h.tableName == "" { // just write index entries
 				err = h.store.IndexChunk(ctx, ch)
 				if err != nil {
@@ -199,7 +235,9 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 					continue
 				}
 			} else {
-				ch.ForceEncode()
+				if reEncodeChunks {
+					ch.ForceEncode()
+				}
 				err = h.store.Put(ctx, []chunk.Chunk{ch})
 				if err != nil {
 					level.Error(util.Logger).Log("msg", "put error", "err", err)
