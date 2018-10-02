@@ -31,6 +31,8 @@ var (
 		Name:      "pages_scanned_total",
 		Help:      "Total count of pages scanned from a table",
 	}, []string{"table"})
+
+	reEncodeChunks bool
 )
 
 func main() {
@@ -41,7 +43,6 @@ func main() {
 
 		deleteOrgsFile string
 		includeOrgsStr string
-		reEncodeChunks bool
 
 		week      int64
 		segments  int
@@ -62,7 +63,7 @@ func main() {
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&rechunkTablePrefix, "dynamodb.rechunk-prefix", "", "Prefix of new chunk table (blank to disable)")
 	flag.StringVar(&reindexTablePrefix, "dynamodb.reindex-prefix", "", "Prefix of new index table (blank to disable)")
-	flag.StringVar(&reEncodeChunks, "re-encode-chunks", false, "Enable re-encoding of chunks to save on storing zeros")
+	flag.BoolVar(&reEncodeChunks, "re-encode-chunks", false, "Enable re-encoding of chunks to save on storing zeros")
 
 	flag.Parse()
 
