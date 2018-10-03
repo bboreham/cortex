@@ -42,7 +42,7 @@ var (
 	})
 	writerQueueLength = prometheus.NewGauge(prometheus.GaugeOpts{
 		Namespace: "cortex",
-		Name:      "cache_writer_queue_length",
+		Name:      "writer_queue_length",
 		Help:      "Number of entries in the writer queue.",
 	})
 )
