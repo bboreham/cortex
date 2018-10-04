@@ -16,10 +16,10 @@ const (
 func TestChunksPartialError(t *testing.T) {
 	fixture := dynamoDBFixture(0, 10, 20)
 	defer fixture.Teardown()
-	client, err := testutils.Setup(fixture, tableName)
+	client, _, err := testutils.Setup(fixture, tableName)
 	require.NoError(t, err)
 
-	sc, ok := client.(*storageClient)
+	sc, ok := client.(storageClient)
 	if !ok {
 		t.Error("DynamoDB test client has unexpected type")
 		return

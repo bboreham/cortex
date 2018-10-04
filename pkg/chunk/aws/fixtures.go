@@ -37,7 +37,7 @@ var Fixtures = []testutils.Fixture{
 			table := &dynamoTableClient{
 				DynamoDB: dynamoDB,
 			}
-			storage := &storageClient{
+			storage := storageClient{
 				DynamoDB:                dynamoDB,
 				S3:                      newMockS3(),
 				queryRequestFn:          dynamoDB.queryRequest,
@@ -69,7 +69,7 @@ func dynamoDBFixture(provisionedErr, gangsize, maxParallelism int) testutils.Fix
 			table := &dynamoTableClient{
 				DynamoDB: dynamoDB,
 			}
-			storage := &storageClient{
+			storage := storageClient{
 				cfg: StorageConfig{
 					DynamoDBConfig: DynamoDBConfig{
 						ChunkGangSize:          gangsize,

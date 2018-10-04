@@ -16,7 +16,7 @@ const (
 	tableName = "test"
 )
 
-type storageClientTest func(*testing.T, chunk.StorageClient)
+type storageClientTest func(*testing.T, chunk.SchemaConfig, chunk.StorageClient)
 
 func forAllFixtures(t *testing.T, storageClientTest storageClientTest) {
 	fixtures := append(aws.Fixtures, gcp.Fixtures...)
@@ -28,11 +28,11 @@ func forAllFixtures(t *testing.T, storageClientTest storageClientTest) {
 
 	for _, fixture := range fixtures {
 		t.Run(fixture.Name(), func(t *testing.T) {
-			storageClient, err := testutils.Setup(fixture, tableName)
+			storageClient, schemaCfg, err := testutils.Setup(fixture, tableName)
 			require.NoError(t, err)
 			defer fixture.Teardown()
 
-			storageClientTest(t, storageClient)
+			storageClientTest(t, schemaCfg, storageClient)
 		})
 	}
 }

@@ -23,26 +23,26 @@ type Fixture interface {
 }
 
 // Setup a fixture with initial tables
-func Setup(fixture Fixture, tableName string) (chunk.StorageClient, error) {
+func Setup(fixture Fixture, tableName string) (chunk.StorageClient, chunk.SchemaConfig, error) {
 	storageClient, tableClient, schemaConfig, err := fixture.Clients()
 	if err != nil {
-		return nil, err
+		return nil, schemaConfig, err
 	}
 
 	tableManager, err := chunk.NewTableManager(schemaConfig, 12*time.Hour, tableClient)
 	if err != nil {
-		return nil, err
+		return nil, schemaConfig, err
 	}
 
 	err = tableManager.SyncTables(context.Background())
 	if err != nil {
-		return nil, err
+		return nil, schemaConfig, err
 	}
 
 	err = tableClient.CreateTable(context.Background(), chunk.TableDesc{
 		Name: tableName,
 	})
-	return storageClient, err
+	return storageClient, schemaConfig, err
 }
 
 // CreateChunks creates some chunks for testing
