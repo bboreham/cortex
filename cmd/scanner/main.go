@@ -15,6 +15,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
+	"github.com/prometheus/common/expfmt"
 	"github.com/prometheus/common/model"
 
 	"github.com/go-kit/kit/log/level"
@@ -133,10 +134,16 @@ func main() {
 	tableTime := model.TimeFromUnix(week * secondsInWeek)
 	err = chunkStore.Scan(context.Background(), tableTime, tableTime, reindexTablePrefix != "", callbacks)
 	checkFatal(err)
+	fmt.Printf("Before stopping\n")
+	printMetrics()
+	l.Set("debug")
+	util.Logger, _ = util.NewPrometheusLogger(l)
 
 	if reindexStore != nil {
 		reindexStore.Stop()
 	}
+	fmt.Printf("After stopping\n")
+	printMetrics()
 
 	totals := newSummary()
 	for segment := 0; segment < segments; segment++ {
@@ -171,7 +178,6 @@ func (s *summary) accumulate(b summary) {
 
 func (s summary) print() {
 	for instance, m := range s.counts {
-		fmt.Printf("%d: %d\n", instance, len(m))
 		for metric, c := range m {
 			fmt.Printf("%d, %s, %d\n", instance, metric, c)
 		}
@@ -254,6 +260,18 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 				}
 			}
 		}
+	}
+}
+
+func printMetrics() {
+	encoder := expfmt.NewEncoder(os.Stdout, expfmt.FmtText)
+	mfs, err := prometheus.DefaultGatherer.Gather()
+	if err != nil {
+		level.Error(util.Logger).Log("msg", "gather error", "err", err)
+		return
+	}
+	for _, mf := range mfs {
+		encoder.Encode(mf)
 	}
 }
 
