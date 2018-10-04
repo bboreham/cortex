@@ -11,11 +11,13 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"github.com/weaveworks/cortex/pkg/chunk"
+	"github.com/weaveworks/cortex/pkg/chunk/aws"
 	"github.com/weaveworks/cortex/pkg/chunk/testutils"
+	"github.com/weaveworks/cortex/pkg/util"
 )
 
 func TestChunksBasic(t *testing.T) {
-	forAllFixtures(t, func(t *testing.T, client chunk.StorageClient) {
+	forAllFixtures(t, func(t *testing.T, _ chunk.SchemaConfig, client chunk.StorageClient) {
 		const batchSize = 50
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
@@ -53,6 +55,74 @@ func TestChunksBasic(t *testing.T) {
 			sort.Sort(ByKey(chunksWeGot))
 			for j := 0; j < len(chunksWeGot); j++ {
 				require.Equal(t, chunksToGet[i].ExternalKey(), chunksWeGot[i].ExternalKey(), strconv.Itoa(i))
+			}
+		}
+	})
+}
+
+func forAllDynamoDBFixtures(t *testing.T, storageClientTest storageClientTest) {
+	fixtures := aws.Fixtures[1:] // Hack!
+
+	for _, fixture := range fixtures {
+		t.Run(fixture.Name(), func(t *testing.T) {
+			storageClient, schemaCfg, err := testutils.Setup(fixture, tableName)
+			require.NoError(t, err)
+			defer fixture.Teardown()
+
+			storageClientTest(t, schemaCfg, storageClient)
+		})
+	}
+}
+
+func TestChunksViaStore(t *testing.T) {
+	forAllDynamoDBFixtures(t, func(t *testing.T, schemaCfg chunk.SchemaConfig, client chunk.StorageClient) {
+		var storeCfg chunk.StoreConfig
+		util.DefaultValues(&storeCfg)
+		opts := []chunk.StorageOpt{{
+			From:   0,
+			Client: client,
+		}}
+		store, err := chunk.NewStore(storeCfg, schemaCfg, opts)
+		require.NoError(t, err)
+
+		const batchSize = 49
+		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+
+		// Write a few batches of chunks.
+		written := []string{}
+		for i := 0; i < 51; i++ {
+			keys, chunks, err := testutils.CreateChunks(i, batchSize)
+			require.NoError(t, err)
+			written = append(written, keys...)
+			err = store.Put(ctx, chunks)
+			require.NoError(t, err)
+		}
+		store.Flush()
+
+		// Get a few batches of chunks.
+		for i := 0; i < 50; i++ {
+			keysToGet := map[string]struct{}{}
+			chunksToGet := []chunk.Chunk{}
+			for len(chunksToGet) < batchSize {
+				key := written[rand.Intn(len(written))]
+				if _, ok := keysToGet[key]; ok {
+					continue
+				}
+				keysToGet[key] = struct{}{}
+				chunk, err := chunk.ParseExternalKey(userID, key)
+				require.NoError(t, err)
+				chunksToGet = append(chunksToGet, chunk)
+			}
+
+			chunksWeGot, err := client.GetChunks(ctx, chunksToGet)
+			require.NoError(t, err)
+			require.Equal(t, len(chunksToGet), len(chunksWeGot))
+
+			sort.Sort(ByKey(chunksToGet))
+			sort.Sort(ByKey(chunksWeGot))
+			for j := 0; j < len(chunksWeGot); j++ {
+				require.Equal(t, chunksToGet[j].ExternalKey(), chunksWeGot[j].ExternalKey(), strconv.Itoa(j))
 			}
 		}
 	})
