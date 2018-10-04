@@ -134,6 +134,10 @@ func main() {
 	err = chunkStore.Scan(context.Background(), tableTime, tableTime, reindexTablePrefix != "", callbacks)
 	checkFatal(err)
 
+	if reindexStore != nil {
+		reindexStore.Stop()
+	}
+
 	totals := newSummary()
 	for segment := 0; segment < segments; segment++ {
 		totals.accumulate(handlers[segment].summary)
