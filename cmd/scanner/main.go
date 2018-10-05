@@ -142,7 +142,7 @@ func main() {
 	for segment := 0; segment < segments; segment++ {
 		totals.accumulate(handlers[segment].summary)
 	}
-	totals.print()
+	totals.print(deleteOrgs)
 }
 
 /* TODO: delete v8 schema rows for all instances */
@@ -169,11 +169,14 @@ func (s *summary) accumulate(b summary) {
 	}
 }
 
-func (s summary) print() {
+func (s summary) print(deleteOrgs map[int]struct{}) {
 	for instance, m := range s.counts {
-		fmt.Printf("%d: %d\n", instance, len(m))
+		deleted := ""
+		if _, found := deleteOrgs[instance]; found {
+			deleted = "deleted"
+		}
 		for metric, c := range m {
-			fmt.Printf("%d, %s, %d\n", instance, metric, c)
+			fmt.Printf("%d, %s, %d, %s\n", instance, metric, c, deleted)
 		}
 	}
 }
