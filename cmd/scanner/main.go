@@ -102,7 +102,7 @@ func main() {
 		week = time.Now().Unix() / secondsInWeek
 	}
 
-	schemaConfig.EndDate.Set(time.Unix((week+1)*secondsInWeek, 0).Format("2006-01-02"))
+	//schemaConfig.EndDate.Set(time.Unix((week+1)*secondsInWeek, 0).Format("2006-01-02"))
 	storageOpts, err := storage.Opts(storageConfig, schemaConfig)
 	checkFatal(err)
 	chunkStore, err := chunk.NewStore(chunkStoreConfig, schemaConfig, storageOpts)
