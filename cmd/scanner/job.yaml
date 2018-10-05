@@ -13,19 +13,19 @@ spec:
       - name: quay-secret
       containers:
       - name: scanner
-        image: quay.io/weaveworks/cortex-scanner:dynamodb-scanning-9b279e35
+        image: quay.io/weaveworks/cortex-scanner:dynamodb-scanning-727907e0
         imagePullPolicy: Always
         args:
-        - -week=2498
-        - -segments=8
+        - -week=2489
+        - -segments=64
         - -writers=16
-        - -writer-rate-limit=1100
+        - -writer-rate-limit=500
         - -dynamodb.url=dynamodb://us-east-1/
         - -dynamodb.chunk-table.from=2017-05-19
-        - -dynamodb.chunk-table.prefix=dev_chunk_data_weekly_
+        - -dynamodb.chunk-table.prefix=prod_chunk_data_weekly_
         - -s3.url=s3://not:used@xxxxxxxx:0
-        - -dynamodb.reindex-prefix=dev_chunk_index3_
-        - -dynamodb.rechunk-prefix=dev_chunk_data3_
+        - -dynamodb.reindex-prefix=prod_chunk_index_
+        - -dynamodb.rechunk-prefix=prod_chunk_data_
         - -dynamodb.use-periodic-tables=true
         - -dynamodb.v9-schema-from=2017-01-10
         - -memcache.write-back-goroutines=1 
@@ -43,4 +43,4 @@ spec:
             cpu: 4
             memory: 2Gi
       restartPolicy: Never
-  backoffLimit: 1
+  backoffLimit: 0
