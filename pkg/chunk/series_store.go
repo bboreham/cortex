@@ -105,7 +105,7 @@ func (c *seriesStore) Get(ctx context.Context, from, through model.Time, allMatc
 	level.Debug(log).Log("series-ids", len(seriesIDs))
 
 	// Lookup the series in the index to get the chunks.
-	chunkIDs, err := c.lookupChunksBySeries(ctx, metricNameMatcher.Value, from, through, seriesIDs)
+	chunkIDs, err := c.lookupChunksBySeries(ctx, from, through, seriesIDs)
 	if err != nil {
 		return nil, err
 	}
@@ -264,7 +264,7 @@ func (c *seriesStore) lookupSeriesByMetricNameMatcher(ctx context.Context, from,
 	return ids, nil
 }
 
-func (c *seriesStore) lookupChunksBySeries(ctx context.Context, metricName string, from, through model.Time, seriesIDs []string) ([]string, error) {
+func (c *seriesStore) lookupChunksBySeries(ctx context.Context, from, through model.Time, seriesIDs []string) ([]string, error) {
 	log, ctx := newSpanLogger(ctx, "ChunkStore.lookupChunksBySeries")
 	defer log.Span.Finish()
 
@@ -276,7 +276,7 @@ func (c *seriesStore) lookupChunksBySeries(ctx context.Context, metricName strin
 
 	queries := make([]IndexQuery, 0, len(seriesIDs))
 	for _, seriesID := range seriesIDs {
-		qs, err := c.schema.GetChunksForSeries(from, through, userID, metricName, []byte(seriesID))
+		qs, err := c.schema.GetChunksForSeries(from, through, userID, []byte(seriesID))
 		if err != nil {
 			return nil, err
 		}

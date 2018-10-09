@@ -182,11 +182,6 @@ func parseChunkTimeRangeValue(rangeValue []byte, value []byte) (
 		labelValue = model.LabelValue(value)
 		return
 
-	// v9b schema version 6 range key is series ID, chunk end time, <empty>, version
-	case bytes.Equal(components[3], chunkTimeRangeKeyV6):
-		chunkID = string(value)
-		return
-
 	// v9 schema actually return series IDs
 	case bytes.Equal(components[3], seriesRangeKeyV1):
 		chunkID = string(components[0])
