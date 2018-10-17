@@ -1,21 +1,23 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
+  annotations:
+  labels:
+    job-name: bryan-dynamodb-scanner
+    name: bryan-dynamodb-scanner
   name: bryan-dynamodb-scanner
   namespace: cortex
 spec:
+  backoffLimit: 0
+  completions: 1
+  parallelism: 1
   template:
     metadata:
       labels:
         name: bryan-dynamodb-scanner
     spec:
-      imagePullSecrets:
-      - name: quay-secret
       containers:
-      - name: scanner
-        image: quay.io/weaveworks/cortex-scanner:dynamodb-scanning-727907e0
-        imagePullPolicy: Always
-        args:
+      - args:
         - -week=2489
         - -segments=64
         - -writers=16
@@ -28,7 +30,7 @@ spec:
         - -dynamodb.rechunk-prefix=prod_chunk_data_
         - -dynamodb.use-periodic-tables=true
         - -dynamodb.v9-schema-from=2017-01-10
-        - -memcache.write-back-goroutines=1 
+        - -memcache.write-back-goroutines=1
         env:
         - name: AWS_ACCESS_KEY_ID
           value: "redacted"
@@ -36,11 +38,16 @@ spec:
           value: "redacted"
         - name: AWS_SESSION_TOKEN
           value: "redacted"
+        image: quay.io/weaveworks/cortex-scanner:dynamodb-scanning-727907e0
+        imagePullPolicy: Always
+        name: scanner
         ports:
         - containerPort: 6060
+          protocol: TCP
         resources:
           requests:
-            cpu: 4
+            cpu: "4"
             memory: 2Gi
+      imagePullSecrets:
+      - name: quay-secret
       restartPolicy: Never
-  backoffLimit: 0
