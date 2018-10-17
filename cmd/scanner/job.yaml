@@ -18,10 +18,11 @@ spec:
     spec:
       containers:
       - args:
-        - -week=2489
+        - -week=2498
+        - -delete-orgs-file=/config/delete-orgs
         - -segments=64
         - -writers=16
-        - -writer-rate-limit=500
+        - -writer-rate-limit=400
         - -dynamodb.url=dynamodb://us-east-1/
         - -dynamodb.chunk-table.from=2017-05-19
         - -dynamodb.chunk-table.prefix=prod_chunk_data_weekly_
@@ -38,7 +39,7 @@ spec:
           value: "redacted"
         - name: AWS_SESSION_TOKEN
           value: "redacted"
-        image: quay.io/weaveworks/cortex-scanner:dynamodb-scanning-727907e0
+        image: quay.io/weaveworks/cortex-scanner:dynamodb-scanning-6ed98674
         imagePullPolicy: Always
         name: scanner
         ports:
@@ -48,6 +49,14 @@ spec:
           requests:
             cpu: "4"
             memory: 2Gi
+        volumeMounts:
+        - mountPath: /config
+          name: config-volume
       imagePullSecrets:
       - name: quay-secret
       restartPolicy: Never
+      volumes:
+      - configMap:
+          defaultMode: 420
+          name: prune-config
+        name: config-volume
