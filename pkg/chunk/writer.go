@@ -98,7 +98,7 @@ func (writer *Writer) Stop() {
 // writeLoop receives on the 'batched' chan, sends to store, and
 // passes anything that was throttled to the 'retry' chan.
 func (sc *Writer) writeLoop(ctx context.Context) {
-	limiter := rate.NewLimiter(rate.Limit(sc.rateLimit), 1000000)
+	limiter := rate.NewLimiter(rate.Limit(sc.rateLimit), 100) // burst size should be the largest batch
 	for {
 		batch, ok := <-sc.batched
 		if !ok {
