@@ -1,0 +1,18 @@
+---
+kind: ConfigMap
+apiVersion: v1
+metadata:
+  name: schema-config
+data:
+  schema.yaml: |-
+    configs:
+    - from: "2019-03-07"
+      store: cassandra
+      object_store: cassandra
+      schema: v9
+      index:
+        prefix: index_
+        period: 168h0m0s
+      chunks:
+        prefix: chunks_
+        period: 168h0m0s

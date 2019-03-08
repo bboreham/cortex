@@ -12,26 +12,33 @@ spec:
     spec:
       containers:
       - name: querier
-        image: quay.io/cortexproject/querier
+        image: quay.io/cortexproject/querier:master-07dc4f31
         imagePullPolicy: IfNotPresent
         args:
         - -server.http-listen-port=80
-        - -consul.hostname=consul.default.svc.cluster.local:8500
-        - -s3.url=s3://abc:123@s3.default.svc.cluster.local:4569
-        - -querier.frontend-address=query-frontend.default.svc.cluster.local:9095
-        - -dynamodb.original-table-name=cortex
-        - -dynamodb.url=dynamodb://user:pass@dynamodb.default.svc.cluster.local:8000
-        - -dynamodb.periodic-table.prefix=cortex_weekly_
-        - -dynamodb.periodic-table.from=2017-01-06
-        - -dynamodb.daily-buckets-from=2017-01-10
-        - -dynamodb.base64-buckets-from=2017-01-17
-        - -dynamodb.v4-schema-from=2017-02-05
-        - -dynamodb.v5-schema-from=2017-02-22
-        - -dynamodb.v6-schema-from=2017-03-19
-        - -dynamodb.chunk-table.from=2017-04-17
-        - -memcached.hostname=memcached.default.svc.cluster.local
+        - -consul.hostname=consul:8500
+        - -cassandra.keyspace=weave
+        - -cassandra.addresses=redacted
+        - -cassandra.port=10350
+        - -cassandra.ssl=true
+        - -cassandra.timeout=5s
+        - -cassandra.host-verification=false
+        - -cassandra.auth=true
+        - -cassandra.username=redacted
+        - -cassandra.password=redacted
+        - -config-yaml=/etc/config/schema.yaml
+        - -memcached.hostname=memcached
         - -memcached.timeout=100ms
         - -memcached.service=memcached
+        - -index.memcached.hostname=memcached.cortex.svc.cluster.local.
+        - -index.memcached.timeout=10s
         - -distributor.replication-factor=1
         ports:
         - containerPort: 80
+        volumeMounts:
+        - name: schema-volume
+          mountPath: /etc/config
+      volumes:
+      - name: schema-volume
+        configMap:
+          name: schema-config
