@@ -283,7 +283,9 @@ func (c *goCollector) CollectWithContext(ctx context.Context, ch chan<- Metric) 
 	ch <- MustNewConstMetric(c.goInfoDesc, GaugeValue, 1)
 
 	ms := &runtime.MemStats{}
+	sp2, _ := ot.StartSpanFromContext(ctx, "ReadMemStats")
 	runtime.ReadMemStats(ms)
+	sp2.Finish()
 	for _, i := range c.metrics {
 		ch <- MustNewConstMetric(i.desc, i.valType, i.eval(ms))
 	}
