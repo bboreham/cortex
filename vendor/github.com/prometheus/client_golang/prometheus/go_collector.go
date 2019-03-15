@@ -1,10 +1,13 @@
 package prometheus
 
 import (
+	"context"
 	"fmt"
 	"runtime"
 	"runtime/debug"
 	"time"
+
+	ot "github.com/opentracing/opentracing-go"
 )
 
 type goCollector struct {
@@ -256,6 +259,12 @@ func (c *goCollector) Describe(ch chan<- *Desc) {
 
 // Collect returns the current state of all metrics of the collector.
 func (c *goCollector) Collect(ch chan<- Metric) {
+	c.CollectWithContext(context.Background(), ch)
+}
+
+func (c *goCollector) CollectWithContext(ctx context.Context, ch chan<- Metric) {
+	sp, ctx := ot.StartSpanFromContext(ctx, "goCollector.Collect")
+	defer sp.Finish()
 	ch <- MustNewConstMetric(c.goroutinesDesc, GaugeValue, float64(runtime.NumGoroutine()))
 	n, _ := runtime.ThreadCreateProfile(nil)
 	ch <- MustNewConstMetric(c.threadsDesc, GaugeValue, float64(n))

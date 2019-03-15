@@ -388,6 +388,11 @@ func (r *Registry) MustRegister(cs ...Collector) {
 	}
 }
 
+// For Collectors that can take an extra context argument
+type contextCollector interface {
+	CollectWithContext(context.Context, chan<- Metric)
+}
+
 // Gather implements Gatherer.
 func (r *Registry) Gather(ctx context.Context) ([]*dto.MetricFamily, error) {
 	sp, ctx := ot.StartSpanFromContext(ctx, "Registry.Gather")
@@ -430,12 +435,20 @@ func (r *Registry) Gather(ctx context.Context) ([]*dto.MetricFamily, error) {
 		for {
 			select {
 			case collector := <-checkedCollectors:
-				sp2, _ := ot.StartSpanFromContext(ctx, "Collect checked")
-				collector.Collect(checkedMetricChan)
+				sp2, ctx := ot.StartSpanFromContext(ctx, "Collect checked")
+				if c, ok := collector.(contextCollector); ok {
+					c.CollectWithContext(ctx, checkedMetricChan)
+				} else {
+					collector.Collect(checkedMetricChan)
+				}
 				sp2.Finish()
 			case collector := <-uncheckedCollectors:
-				sp2, _ := ot.StartSpanFromContext(ctx, "Collect unchecked")
-				collector.Collect(uncheckedMetricChan)
+				sp2, ctx := ot.StartSpanFromContext(ctx, "Collect unchecked")
+				if c, ok := collector.(contextCollector); ok {
+					c.CollectWithContext(ctx, uncheckedMetricChan)
+				} else {
+					collector.Collect(uncheckedMetricChan)
+				}
 				sp2.Finish()
 			default:
 				return
@@ -537,7 +550,7 @@ func (r *Registry) Gather(ctx context.Context) ([]*dto.MetricFamily, error) {
 			break
 		}
 	}
-	return normalizeMetricFamilies(metricFamiliesByName), errs.MaybeUnwrap()
+	return normalizeMetricFamilies(ctx, metricFamiliesByName), errs.MaybeUnwrap()
 }
 
 // processMetric is an internal helper method only used by the Gather method.
@@ -663,6 +676,8 @@ type Gatherers []Gatherer
 
 // Gather implements Gatherer.
 func (gs Gatherers) Gather(ctx context.Context) ([]*dto.MetricFamily, error) {
+	sp, ctx := ot.StartSpanFromContext(ctx, "Gatherers.Gather")
+	defer sp.Finish()
 	var (
 		metricFamiliesByName = map[string]*dto.MetricFamily{}
 		metricHashes         = map[uint64]struct{}{}
@@ -717,7 +732,7 @@ func (gs Gatherers) Gather(ctx context.Context) ([]*dto.MetricFamily, error) {
 			}
 		}
 	}
-	return normalizeMetricFamilies(metricFamiliesByName), errs.MaybeUnwrap()
+	return normalizeMetricFamilies(ctx, metricFamiliesByName), errs.MaybeUnwrap()
 }
 
 // metricSorter is a sortable slice of *dto.Metric.
@@ -767,7 +782,9 @@ func (s metricSorter) Less(i, j int) bool {
 // normalizeMetricFamilies returns a MetricFamily slice with empty
 // MetricFamilies pruned and the remaining MetricFamilies sorted by name within
 // the slice, with the contained Metrics sorted within each MetricFamily.
-func normalizeMetricFamilies(metricFamiliesByName map[string]*dto.MetricFamily) []*dto.MetricFamily {
+func normalizeMetricFamilies(ctx context.Context, metricFamiliesByName map[string]*dto.MetricFamily) []*dto.MetricFamily {
+	sp, _ := ot.StartSpanFromContext(ctx, "normalizeMetricFamilies")
+	defer sp.Finish()
 	for _, mf := range metricFamiliesByName {
 		sort.Sort(metricSorter(mf.Metric))
 	}
