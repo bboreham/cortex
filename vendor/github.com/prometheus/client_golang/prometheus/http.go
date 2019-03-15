@@ -72,7 +72,7 @@ func Handler() http.Handler {
 // Deprecated: Use promhttp.Handler instead. See there for further documentation.
 func UninstrumentedHandler() http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
-		mfs, err := DefaultGatherer.Gather()
+		mfs, err := DefaultGatherer.Gather(req.Context())
 		if err != nil {
 			http.Error(w, "An error has occurred during metrics collection:\n\n"+err.Error(), http.StatusInternalServerError)
 			return

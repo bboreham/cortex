@@ -15,6 +15,7 @@ package prometheus
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"os"
 	"runtime"
@@ -24,6 +25,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/golang/protobuf/proto"
+	ot "github.com/opentracing/opentracing-go"
 
 	dto "github.com/prometheus/client_model/go"
 )
@@ -154,7 +156,7 @@ type Gatherer interface {
 	// exposition in actual monitoring, it is almost always better to not
 	// expose an incomplete result and instead disregard the returned
 	// MetricFamily protobufs in case the returned error is non-nil.
-	Gather() ([]*dto.MetricFamily, error)
+	Gather(context.Context) ([]*dto.MetricFamily, error)
 }
 
 // Register registers the provided Collector with the DefaultRegisterer.
@@ -187,7 +189,7 @@ func Unregister(c Collector) bool {
 type GathererFunc func() ([]*dto.MetricFamily, error)
 
 // Gather implements Gatherer.
-func (gf GathererFunc) Gather() ([]*dto.MetricFamily, error) {
+func (gf GathererFunc) Gather(context.Context) ([]*dto.MetricFamily, error) {
 	return gf()
 }
 
@@ -387,7 +389,9 @@ func (r *Registry) MustRegister(cs ...Collector) {
 }
 
 // Gather implements Gatherer.
-func (r *Registry) Gather() ([]*dto.MetricFamily, error) {
+func (r *Registry) Gather(ctx context.Context) ([]*dto.MetricFamily, error) {
+	sp, ctx := ot.StartSpanFromContext(ctx, "Registry.Gather")
+	defer sp.Finish()
 	var (
 		checkedMetricChan   = make(chan Metric, capMetricChan)
 		uncheckedMetricChan = make(chan Metric, capMetricChan)
@@ -421,12 +425,18 @@ func (r *Registry) Gather() ([]*dto.MetricFamily, error) {
 	wg.Add(goroutineBudget)
 
 	collectWorker := func() {
+		sp, ctx := ot.StartSpanFromContext(ctx, "collectWorker")
+		defer sp.Finish()
 		for {
 			select {
 			case collector := <-checkedCollectors:
+				sp2, _ := ot.StartSpanFromContext(ctx, "Collect checked")
 				collector.Collect(checkedMetricChan)
+				sp2.Finish()
 			case collector := <-uncheckedCollectors:
+				sp2, _ := ot.StartSpanFromContext(ctx, "Collect unchecked")
 				collector.Collect(uncheckedMetricChan)
+				sp2.Finish()
 			default:
 				return
 			}
@@ -652,7 +662,7 @@ func processMetric(
 type Gatherers []Gatherer
 
 // Gather implements Gatherer.
-func (gs Gatherers) Gather() ([]*dto.MetricFamily, error) {
+func (gs Gatherers) Gather(ctx context.Context) ([]*dto.MetricFamily, error) {
 	var (
 		metricFamiliesByName = map[string]*dto.MetricFamily{}
 		metricHashes         = map[uint64]struct{}{}
@@ -660,7 +670,7 @@ func (gs Gatherers) Gather() ([]*dto.MetricFamily, error) {
 	)
 
 	for i, g := range gs {
-		mfs, err := g.Gather()
+		mfs, err := g.Gather(ctx)
 		if err != nil {
 			if multiErr, ok := err.(MultiError); ok {
 				for _, err := range multiErr {
