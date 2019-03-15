@@ -113,7 +113,7 @@ func HandlerFor(reg prometheus.Gatherer, opts HandlerOpts) http.Handler {
 			}
 		}
 
-		mfs, err := reg.Gather()
+		mfs, err := reg.Gather(req.Context())
 		if err != nil {
 			if opts.ErrorLog != nil {
 				opts.ErrorLog.Println("error gathering metrics:", err)
