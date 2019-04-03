@@ -192,6 +192,10 @@ func (c *store) GetChunkRefs(ctx context.Context, from, through model.Time, allM
 	return nil, nil, errors.New("not implemented")
 }
 
+func (c *store) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error {
+	return c.storage.(ObjectClient2).Scan(ctx, from, through, withValue, callbacks)
+}
+
 // LabelValuesForMetricName retrieves all label values for a single label name and metric name.
 func (c *store) LabelValuesForMetricName(ctx context.Context, from, through model.Time, metricName, labelName string) ([]string, error) {
 	log, ctx := spanlogger.New(ctx, "ChunkStore.LabelValues")

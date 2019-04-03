@@ -1,6 +1,7 @@
 package chunk
 
 import "context"
+import "github.com/prometheus/common/model"
 
 // IndexClient is a client for the storage of the index (e.g. DynamoDB or Bigtable).
 type IndexClient interface {
@@ -25,6 +26,12 @@ type ObjectClient interface {
 // ObjectAndIndexClient allows optimisations where the same client handles both
 type ObjectAndIndexClient interface {
 	PutChunkAndIndex(ctx context.Context, c Chunk, index WriteBatch) error
+}
+
+// ObjectClient2 because naming is hard
+type ObjectClient2 interface {
+	ObjectClient
+	Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error
 }
 
 // WriteBatch represents a batch of writes.
