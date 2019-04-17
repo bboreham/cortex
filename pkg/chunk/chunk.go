@@ -263,7 +263,7 @@ func (c *Chunk) Decode(decodeContext *DecodeContext, input []byte) error {
 		var err error
 		c.Data, err = prom_chunk.NewForEncoding(prom_chunk.DoubleDelta)
 		if err != nil {
-			return err
+			return errors.Wrap(err, "new chunk")
 		}
 		c.encoded = input
 		return errors.Wrap(c.Data.UnmarshalFromBuf(input), "when unmarshalling legacy chunk")
@@ -326,7 +326,7 @@ func (c *Chunk) Decode(decodeContext *DecodeContext, input []byte) error {
 		return ErrDataLength
 	}
 
-	return c.Data.UnmarshalFromBuf(remainingData[:int(dataLen)])
+	return errors.Wrap(c.Data.UnmarshalFromBuf(remainingData[:int(dataLen)]), "unmarshal new-style")
 }
 
 func equalByKey(a, b Chunk) bool {
