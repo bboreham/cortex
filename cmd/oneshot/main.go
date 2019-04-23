@@ -17,6 +17,7 @@ import (
 
 	"github.com/cortexproject/cortex/pkg/chunk"
 	"github.com/cortexproject/cortex/pkg/chunk/storage"
+	chunk_util "github.com/cortexproject/cortex/pkg/chunk/util"
 	"github.com/cortexproject/cortex/pkg/ingester/client"
 	"github.com/cortexproject/cortex/pkg/prom1/storage/metric"
 	"github.com/cortexproject/cortex/pkg/querier"
@@ -31,11 +32,14 @@ func main() {
 		querierConfig    querier.Config
 		loglevel         string
 		endTime          string
+		queryParallelism int
 	)
 	util.RegisterFlags(&chunkStoreConfig, &schemaConfig, &storageConfig, &querierConfig)
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&endTime, "end-time", "", "Time of query in RFC3339 format; default to now")
+	flag.IntVar(&queryParallelism, "querier.query-parallelism", 100, "Max subqueries run in parallel per higher-level query.")
 	flag.Parse()
+	chunk_util.QueryParallelism = queryParallelism
 
 	trace := tracing.NewFromEnv("oneshot")
 	defer trace.Close()
@@ -46,13 +50,7 @@ func main() {
 	l.Set(loglevel)
 	util.Logger, _ = util.NewPrometheusLogger(l)
 
-	storageOpts, err := storage.Opts(storageConfig, schemaConfig)
-	if err != nil {
-		level.Error(util.Logger).Log("msg", "error initializing storage client", "err", err)
-		os.Exit(1)
-	}
-
-	chunkStore, err := chunk.NewStore(chunkStoreConfig, schemaConfig, storageOpts)
+	chunkStore, err := storage.NewStore(storageConfig, chunkStoreConfig, schemaConfig)
 	if err != nil {
 		level.Error(util.Logger).Log("err", err)
 		os.Exit(1)
@@ -65,7 +63,7 @@ func main() {
 		level.Error(util.Logger).Log("usage: oneshot <options> promql-query")
 	}
 
-	end := time.Now()
+	end := time.Now().Add(-time.Hour)
 	if endTime != "" {
 		end, err = time.Parse(time.RFC3339, endTime)
 		if err != nil {
