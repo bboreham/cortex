@@ -22,6 +22,8 @@ import (
 	"github.com/cortexproject/cortex/pkg/prom1/storage/metric"
 	"github.com/cortexproject/cortex/pkg/querier"
 	"github.com/cortexproject/cortex/pkg/util"
+	"github.com/cortexproject/cortex/pkg/util/flagext"
+	"github.com/cortexproject/cortex/pkg/util/validation"
 )
 
 func main() {
@@ -29,12 +31,13 @@ func main() {
 		chunkStoreConfig chunk.StoreConfig
 		schemaConfig     chunk.SchemaConfig
 		storageConfig    storage.Config
+		limits           validation.Limits
 		querierConfig    querier.Config
 		loglevel         string
 		endTime          string
 		queryParallelism int
 	)
-	util.RegisterFlags(&chunkStoreConfig, &schemaConfig, &storageConfig, &querierConfig)
+	flagext.RegisterFlags(&chunkStoreConfig, &schemaConfig, &storageConfig, &querierConfig, &limits)
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&endTime, "end-time", "", "Time of query in RFC3339 format; default to now")
 	flag.IntVar(&queryParallelism, "querier.query-parallelism", 100, "Max subqueries run in parallel per higher-level query.")
@@ -50,7 +53,10 @@ func main() {
 	l.Set(loglevel)
 	util.Logger, _ = util.NewPrometheusLogger(l)
 
-	chunkStore, err := storage.NewStore(storageConfig, chunkStoreConfig, schemaConfig)
+	overrides, err := validation.NewOverrides(limits)
+	util.CheckFatal("initializing overrides", err)
+
+	chunkStore, err := storage.NewStore(storageConfig, chunkStoreConfig, schemaConfig, overrides)
 	if err != nil {
 		level.Error(util.Logger).Log("err", err)
 		os.Exit(1)
@@ -95,6 +101,10 @@ func (n noopDistributor) MetricsForLabelMatchers(ctx context.Context, from, thro
 }
 
 func (n noopDistributor) LabelValuesForLabelName(context.Context, model.LabelName) ([]string, error) {
+	return nil, nil
+}
+
+func (n noopDistributor) LabelNames(context.Context) ([]string, error) {
 	return nil, nil
 }
 
