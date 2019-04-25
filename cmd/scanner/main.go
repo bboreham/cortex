@@ -43,6 +43,7 @@ func main() {
 		rechunkConfig    chunk.SchemaConfig
 		storageConfig    storage.Config
 		chunkStoreConfig chunk.StoreConfig
+		tbmConfig        chunk.TableManagerConfig
 
 		deleteOrgsFile string
 		includeOrgsStr string
@@ -56,7 +57,7 @@ func main() {
 		rechunkSchemaFile string
 	)
 
-	flagext.RegisterFlags(&storageConfig, &schemaConfig, &chunkStoreConfig)
+	flagext.RegisterFlags(&storageConfig, &schemaConfig, &chunkStoreConfig, &tbmConfig)
 	flag.StringVar(&address, "address", ":6060", "Address to listen on, for profiling, etc.")
 	flag.Int64Var(&week, "week", 0, "Week number to scan, e.g. 2497 (0 means current week)")
 	flag.IntVar(&segments, "segments", 1, "Number of segments to read in parallel")
@@ -84,6 +85,7 @@ func main() {
 	if week == 0 {
 		week = time.Now().Unix() / secondsInWeek
 	}
+	tableTime := model.TimeFromUnix(week * secondsInWeek)
 
 	err := schemaConfig.Load()
 	checkFatal(err)
@@ -97,11 +99,34 @@ func main() {
 	if rechunkSchemaFile != "" {
 		err := rechunkConfig.LoadFromFile(rechunkSchemaFile)
 		checkFatal(err)
+		if len(rechunkConfig.Configs) != 1 {
+			checkFatal(fmt.Errorf("rechunk config must have 1 config"))
+		}
 		reindexStore, err = storage.NewStore(storageConfig, chunkStoreConfig, rechunkConfig, overrides)
 		checkFatal(err)
+
+		oneWeek := model.TimeFromUnix(secondsInWeek)
+
+		tableClient, err := storage.NewTableClient(rechunkConfig.Configs[0].IndexType, storageConfig)
+		util.CheckFatal("initializing table client", err)
+
+		// We want our table-manager to manage just a two-week period
+		rechunkConfig.Configs[0].From = tableTime
+		rechunkConfig.Configs = append(rechunkConfig.Configs,
+			chunk.PeriodConfig{
+				From:       tableTime + oneWeek*2,
+				IndexType:  "inmemory",
+				ObjectType: "inmemory",
+			})
+
+		tableManager, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient)
+		util.CheckFatal("initializing table manager", err)
+		tableManager.Start()
+		defer tableManager.Stop()
+
+		time.Sleep(5 * time.Second) // give it time to sync FIXME do this better
 	}
 
-	tableTime := model.TimeFromUnix(week * secondsInWeek)
 	tableName, err = schemaConfig.ChunkTableFor(tableTime)
 	checkFatal(err)
 	fmt.Printf("table %s\n", tableName)
