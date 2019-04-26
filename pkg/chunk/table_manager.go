@@ -174,7 +174,7 @@ func (m *TableManager) loop() {
 	defer ticker.Stop()
 
 	if err := instrument.CollectedRequest(context.Background(), "TableManager.SyncTables", syncTableDuration, instrument.ErrorCode, func(ctx context.Context) error {
-		return m.SyncTables(ctx)
+		return m.SyncTables(ctx, mtime.Now())
 	}); err != nil {
 		level.Error(util.Logger).Log("msg", "error syncing tables", "err", err)
 	}
@@ -183,7 +183,7 @@ func (m *TableManager) loop() {
 		select {
 		case <-ticker.C:
 			if err := instrument.CollectedRequest(context.Background(), "TableManager.SyncTables", syncTableDuration, instrument.ErrorCode, func(ctx context.Context) error {
-				return m.SyncTables(ctx)
+				return m.SyncTables(ctx, mtime.Now())
 			}); err != nil {
 				level.Error(util.Logger).Log("msg", "error syncing tables", "err", err)
 			}
@@ -215,8 +215,8 @@ func (m *TableManager) bucketRetentionLoop() {
 
 // SyncTables will calculate the tables expected to exist, create those that do
 // not and update those that need it.  It is exposed for testing.
-func (m *TableManager) SyncTables(ctx context.Context) error {
-	expected := m.calculateExpectedTables()
+func (m *TableManager) SyncTables(ctx context.Context, atTime time.Time) error {
+	expected := m.calculateExpectedTables(atTime)
 	level.Info(util.Logger).Log("msg", "synching tables", "num_expected_tables", len(expected), "expected_tables", len(expected))
 
 	toCreate, toCheckThroughput, toDelete, err := m.partitionTables(ctx, expected)
@@ -235,11 +235,11 @@ func (m *TableManager) SyncTables(ctx context.Context) error {
 	return m.updateTables(ctx, toCheckThroughput)
 }
 
-func (m *TableManager) calculateExpectedTables() []TableDesc {
+func (m *TableManager) calculateExpectedTables(atTime time.Time) []TableDesc {
 	result := []TableDesc{}
 
 	for i, config := range m.schemaCfg.Configs {
-		if config.From.Time.Time().After(mtime.Now()) {
+		if config.From.Time.Time().After(atTime) {
 			continue
 		}
 		if config.IndexTables.Period == 0 { // non-periodic table
@@ -260,9 +260,8 @@ func (m *TableManager) calculateExpectedTables() []TableDesc {
 					endTime         = m.schemaCfg.Configs[i+1].From.Unix()
 					gracePeriodSecs = int64(m.cfg.CreationGracePeriod / time.Second)
 					maxChunkAgeSecs = int64(m.maxChunkAge / time.Second)
-					now             = mtime.Now().Unix()
 				)
-				if now >= endTime+gracePeriodSecs+maxChunkAgeSecs {
+				if atTime.Unix() >= endTime+gracePeriodSecs+maxChunkAgeSecs {
 					isActive = false
 
 				}
@@ -282,7 +281,7 @@ func (m *TableManager) calculateExpectedTables() []TableDesc {
 			}
 			result = append(result, table)
 		} else {
-			endTime := mtime.Now().Add(m.cfg.CreationGracePeriod)
+			endTime := atTime.Add(m.cfg.CreationGracePeriod)
 			if i+1 < len(m.schemaCfg.Configs) {
 				nextFrom := m.schemaCfg.Configs[i+1].From.Time.Time()
 				if endTime.After(nextFrom) {
@@ -291,11 +290,11 @@ func (m *TableManager) calculateExpectedTables() []TableDesc {
 			}
 			endModelTime := model.TimeFromUnix(endTime.Unix())
 			result = append(result, config.IndexTables.periodicTables(
-				config.From.Time, endModelTime, m.cfg.IndexTables, m.cfg.CreationGracePeriod, m.maxChunkAge, m.cfg.RetentionPeriod,
+				atTime, config.From.Time, endModelTime, m.cfg.IndexTables, m.cfg.CreationGracePeriod, m.maxChunkAge, m.cfg.RetentionPeriod,
 			)...)
 			if config.ChunkTables.Prefix != "" {
 				result = append(result, config.ChunkTables.periodicTables(
-					config.From.Time, endModelTime, m.cfg.ChunkTables, m.cfg.CreationGracePeriod, m.maxChunkAge, m.cfg.RetentionPeriod,
+					atTime, config.From.Time, endModelTime, m.cfg.ChunkTables, m.cfg.CreationGracePeriod, m.maxChunkAge, m.cfg.RetentionPeriod,
 				)...)
 			}
 		}

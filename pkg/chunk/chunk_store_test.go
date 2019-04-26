@@ -19,6 +19,7 @@ import (
 	"github.com/cortexproject/cortex/pkg/util/extract"
 	"github.com/cortexproject/cortex/pkg/util/flagext"
 	"github.com/cortexproject/cortex/pkg/util/validation"
+	"github.com/weaveworks/common/mtime"
 	"github.com/weaveworks/common/test"
 	"github.com/weaveworks/common/user"
 )
@@ -81,7 +82,7 @@ func newTestChunkStoreConfig(t require.TestingT, schemaName string, storeCfg Sto
 	tableManager, err := NewTableManager(tbmConfig, schemaCfg, maxChunkAge, storage, nil)
 	require.NoError(t, err)
 
-	err = tableManager.SyncTables(context.Background())
+	err = tableManager.SyncTables(context.Background(), mtime.Now())
 	require.NoError(t, err)
 
 	var limits validation.Limits

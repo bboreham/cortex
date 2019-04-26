@@ -12,6 +12,7 @@ import (
 
 	"github.com/cortexproject/cortex/pkg/chunk"
 	"github.com/cortexproject/cortex/pkg/ingester/client"
+	"github.com/weaveworks/common/mtime"
 )
 
 const (
@@ -45,7 +46,7 @@ func Setup(fixture Fixture, tableName string) (chunk.IndexClient, chunk.ObjectCl
 		return nil, nil, err
 	}
 
-	err = tableManager.SyncTables(context.Background())
+	err = tableManager.SyncTables(context.Background(), mtime.Now())
 	if err != nil {
 		return nil, nil, err
 	}
