@@ -24,6 +24,9 @@ import (
 	"github.com/cortexproject/cortex/pkg/querier/astmapper"
 	"github.com/cortexproject/cortex/pkg/util/flagext"
 	"github.com/cortexproject/cortex/pkg/util/validation"
+	"github.com/weaveworks/common/mtime"
+	"github.com/weaveworks/common/test"
+	"github.com/weaveworks/common/user"
 )
 
 type configFactory func() StoreConfig
@@ -82,7 +85,7 @@ func newTestChunkStoreConfigWithMockStorage(t require.TestingT, schemaCfg Schema
 	tableManager, err := NewTableManager(tbmConfig, schemaCfg, maxChunkAge, storage, nil, nil)
 	require.NoError(t, err)
 
-	err = tableManager.SyncTables(context.Background())
+	err = tableManager.SyncTables(context.Background(), mtime.Now())
 	require.NoError(t, err)
 
 	var limits validation.Limits

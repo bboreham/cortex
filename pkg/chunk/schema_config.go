@@ -10,7 +10,6 @@ import (
 
 	"github.com/go-kit/kit/log/level"
 	"github.com/prometheus/common/model"
-	"github.com/weaveworks/common/mtime"
 	yaml "gopkg.in/yaml.v2"
 
 	"github.com/cortexproject/cortex/pkg/util"
@@ -346,7 +345,7 @@ func (cfg *AutoScalingConfig) RegisterFlags(argPrefix string, f *flag.FlagSet) {
 	f.Float64Var(&cfg.TargetValue, argPrefix+".target-value", 80, "DynamoDB target ratio of consumed capacity to provisioned capacity.")
 }
 
-func (cfg *PeriodicTableConfig) periodicTables(from, through model.Time, pCfg ProvisionConfig, beginGrace, endGrace time.Duration, retention time.Duration) []TableDesc {
+func (cfg *PeriodicTableConfig) periodicTables(atTime time.Time, from, through model.Time, pCfg ProvisionConfig, beginGrace, endGrace time.Duration, retention time.Duration) []TableDesc {
 	var (
 		periodSecs     = int64(cfg.Period / time.Second)
 		beginGraceSecs = int64(beginGrace / time.Second)
@@ -354,7 +353,7 @@ func (cfg *PeriodicTableConfig) periodicTables(from, through model.Time, pCfg Pr
 		firstTable     = from.Unix() / periodSecs
 		lastTable      = through.Unix() / periodSecs
 		tablesToKeep   = int64(int64(retention/time.Second) / periodSecs)
-		now            = mtime.Now().Unix()
+		now            = atTime.Unix()
 		nowWeek        = now / periodSecs
 		result         = []TableDesc{}
 	)

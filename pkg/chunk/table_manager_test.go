@@ -97,7 +97,7 @@ func tmTest(t *testing.T, client *mockTableClient, tableManager *TableManager, n
 		ctx := context.Background()
 		mtime.NowForce(tm)
 		defer mtime.NowReset()
-		if err := tableManager.SyncTables(ctx); err != nil {
+		if err := tableManager.SyncTables(ctx, mtime.Now()); err != nil {
 			t.Fatal(err)
 		}
 		err := ExpectTables(ctx, client, expected)
@@ -514,7 +514,7 @@ func TestTableManagerTags(t *testing.T) {
 			ctx := context.Background()
 			mtime.NowForce(tm)
 			defer mtime.NowReset()
-			if err := tableManager.SyncTables(ctx); err != nil {
+			if err := tableManager.SyncTables(ctx, mtime.Now()); err != nil {
 				t.Fatal(err)
 			}
 			err := ExpectTables(ctx, client, expected)

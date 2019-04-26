@@ -17,6 +17,7 @@ import (
 	"github.com/cortexproject/cortex/pkg/ingester/client"
 	"github.com/cortexproject/cortex/pkg/util/flagext"
 	"github.com/cortexproject/cortex/pkg/util/validation"
+	"github.com/weaveworks/common/mtime"
 )
 
 const (
@@ -50,7 +51,7 @@ func Setup(fixture Fixture, tableName string) (chunk.IndexClient, chunk.Client, 
 		return nil, nil, err
 	}
 
-	err = tableManager.SyncTables(context.Background())
+	err = tableManager.SyncTables(context.Background(), mtime.Now())
 	if err != nil {
 		return nil, nil, err
 	}
