@@ -105,6 +105,12 @@ func main() {
 		reindexStore, err = storage.NewStore(storageConfig, chunkStoreConfig, rechunkConfig, overrides)
 		checkFatal(err)
 
+		// We need to "trick" the metrics auto-scaling into scaling up and down,
+		// even though we don't have a queue that it's used to looking at.
+		// Pretend we have a queue that is always enormous and also always shrinking
+		trickQuery := "2000000000-timestamp(count(up))"
+		storageConfig.AWSStorageConfig.Metrics.QueueLengthQuery = trickQuery
+
 		tableClient, err := storage.NewTableClient(rechunkConfig.Configs[0].IndexType, storageConfig)
 		util.CheckFatal("initializing table client", err)
 
@@ -116,6 +122,8 @@ func main() {
 		err = tableManager.SyncTables(context.Background(), tableTime.Time())
 		util.CheckFatal("sync tables", err)
 		time.Sleep(time.Minute) // allow time for tables to be created.  FIXME do this better
+		// Sync continuously in background
+		go tmLoop(context.Background(), tableManager, tableTime.Time())
 	}
 
 	tableName, err = schemaConfig.ChunkTableFor(tableTime)
@@ -141,6 +149,21 @@ func main() {
 		totals.accumulate(handlers[segment].summary)
 	}
 	totals.print(deleteOrgs)
+}
+
+// Sync like the real table-manager does, but at the specific time we are operating
+func tmLoop(ctx context.Context, m *chunk.TableManager, atTime time.Time) {
+	ticker := time.NewTicker(5 * time.Minute)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			if err := m.SyncTables(ctx, atTime); err != nil {
+				level.Error(util.Logger).Log("msg", "error syncing tables", "err", err)
+			}
+		}
+	}
 }
 
 func setupOrgs(deleteOrgsFile, includeOrgsStr string) (deleteOrgs, includeOrgs map[int]struct{}) {
