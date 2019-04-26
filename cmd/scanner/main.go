@@ -105,26 +105,17 @@ func main() {
 		reindexStore, err = storage.NewStore(storageConfig, chunkStoreConfig, rechunkConfig, overrides)
 		checkFatal(err)
 
-		oneWeek := model.TimeFromUnix(secondsInWeek)
-
 		tableClient, err := storage.NewTableClient(rechunkConfig.Configs[0].IndexType, storageConfig)
 		util.CheckFatal("initializing table client", err)
 
 		// We want our table-manager to manage just a two-week period
 		rechunkConfig.Configs[0].From.Time = tableTime
-		rechunkConfig.Configs = append(rechunkConfig.Configs,
-			chunk.PeriodConfig{
-				From:       chunk.DayTime{Time: tableTime + oneWeek*2},
-				IndexType:  "inmemory",
-				ObjectType: "inmemory",
-			})
-
+		tbmConfig.CreationGracePeriod = time.Hour * 169
 		tableManager, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient, nil)
 		util.CheckFatal("initializing table manager", err)
-		tableManager.Start()
-		defer tableManager.Stop()
-
-		time.Sleep(5 * time.Second) // give it time to sync FIXME do this better
+		err = tableManager.SyncTables(context.Background(), tableTime.Time())
+		util.CheckFatal("sync tables", err)
+		time.Sleep(time.Minute) // allow time for tables to be created.  FIXME do this better
 	}
 
 	tableName, err = schemaConfig.ChunkTableFor(tableTime)
