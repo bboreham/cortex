@@ -77,6 +77,7 @@ func dynamoDBFixture(provisionedErr, gangsize, maxParallelism int) testutils.Fix
 					},
 				},
 				DynamoDB:                dynamoDB,
+				readThrottle:            rate.NewLimiter(10, dynamoDBMaxReadBatchSize),
 				writeThrottle:           rate.NewLimiter(10, dynamoDBMaxWriteBatchSize),
 				queryRequestFn:          dynamoDB.queryRequest,
 				batchGetItemRequestFn:   dynamoDB.batchGetItemRequest,

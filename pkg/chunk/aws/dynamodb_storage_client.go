@@ -146,6 +146,7 @@ type dynamoDBStorageClient struct {
 
 	DynamoDB dynamodbiface.DynamoDBAPI
 	// These rate-limiters let us slow down when DynamoDB signals provision limits.
+	readThrottle  *rate.Limiter
 	writeThrottle *rate.Limiter
 
 	// These functions exists for mocking, so we don't have to write a whole load
@@ -176,6 +177,7 @@ func newDynamoDBStorageClient(cfg DynamoDBConfig, schemaCfg chunk.SchemaConfig) 
 		cfg:           cfg,
 		schemaCfg:     schemaCfg,
 		DynamoDB:      dynamoDB,
+		readThrottle:  rate.NewLimiter(rate.Limit(cfg.ThrottleLimit), dynamoDBMaxReadBatchSize),
 		writeThrottle: rate.NewLimiter(rate.Limit(cfg.ThrottleLimit), dynamoDBMaxWriteBatchSize),
 	}
 	client.queryRequestFn = client.queryRequest
@@ -387,6 +389,7 @@ func (a dynamoDBStorageClient) queryPage(ctx context.Context, input *dynamodb.Qu
 					level.Warn(util.Logger).Log("msg", "DynamoDB error", "retry", backoff.NumRetries(), "table", *input.TableName, "err", err)
 				}
 				backoff.Wait()
+				a.readThrottle.WaitN(ctx, 1)
 				continue
 			}
 			return nil, fmt.Errorf("QueryPage error: table=%v, err=%v", *input.TableName, err)
@@ -565,6 +568,7 @@ func (a dynamoDBStorageClient) getDynamoDBChunks(ctx context.Context, chunks []c
 			// so back off and retry all.
 			if awsErr, ok := err.(awserr.Error); ok && ((awsErr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException) || request.Retryable()) {
 				unprocessed.TakeReqs(requests, -1)
+				a.readThrottle.WaitN(ctx, len(requests))
 				backoff.Wait()
 				continue
 			} else if ok && awsErr.Code() == validationException {
@@ -591,6 +595,7 @@ func (a dynamoDBStorageClient) getDynamoDBChunks(ctx context.Context, chunks []c
 
 		// If there are unprocessed items, retry those items.
 		if unprocessedKeys := response.UnprocessedKeys; unprocessedKeys != nil && dynamoDBReadRequest(unprocessedKeys).Len() > 0 {
+			a.readThrottle.WaitN(ctx, len(unprocessedKeys))
 			unprocessed.TakeReqs(unprocessedKeys, -1)
 		}
 
