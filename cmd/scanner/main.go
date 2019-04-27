@@ -294,10 +294,13 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 						continue
 					}
 				}
-				err = h.store.Put(ctx, []chunk.Chunk{ch})
-				if err != nil {
-					level.Error(util.Logger).Log("msg", "put error", "err", err)
-					continue
+				for {
+					err = h.store.Put(ctx, []chunk.Chunk{ch})
+					if err != nil {
+						level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
+						continue
+					}
+					break
 				}
 			}
 		}
