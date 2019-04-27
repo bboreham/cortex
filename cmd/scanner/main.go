@@ -35,6 +35,8 @@ var (
 	}, []string{"table"})
 
 	reEncodeChunks bool
+
+	removeBogusKubeletMetrics bool
 )
 
 func main() {
@@ -66,6 +68,7 @@ func main() {
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&rechunkSchemaFile, "rechunk-yaml", "", "Yaml definition of new chunk tables (blank to disable)")
 	flag.BoolVar(&reEncodeChunks, "re-encode-chunks", false, "Enable re-encoding of chunks to save on storing zeros")
+	flag.BoolVar(&removeBogusKubeletMetrics, "remove-bogus-kubelet", false, "Remove bogus Kubelete metrics from the output")
 
 	flag.Parse()
 
@@ -220,7 +223,11 @@ func (s summary) print(deleteOrgs map[int]struct{}) {
 			deleted = "deleted"
 		}
 		for metric, c := range m {
-			fmt.Printf("%d, %s, %d, %s\n", instance, metric, c, deleted)
+			bogus := ""
+			if isBogus(metric) {
+				bogus = "bogus"
+			}
+			fmt.Printf("%d, %s, %d, %s%s\n", instance, metric, c, deleted, bogus)
 		}
 	}
 }
@@ -285,7 +292,11 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 				level.Error(util.Logger).Log("msg", "chunk decode error", "err", err)
 				continue
 			}
-			h.counts[org][string(ch.Metric.Get(model.MetricNameLabel))]++
+			metricName := string(ch.Metric.Get(model.MetricNameLabel))
+			h.counts[org][metricName]++
+			if isBogus(metricName) {
+				continue
+			}
 			{
 				if reEncodeChunks {
 					err = ch.Encode()
@@ -305,6 +316,17 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			}
 		}
 	}
+}
+
+func isBogus(metricName string) bool {
+	if removeBogusKubeletMetrics &&
+		(metricName == "container_network_tcp_usage_total" ||
+			metricName == "container_network_udp_usage_total" ||
+			metricName == "container_tasks_state" ||
+			metricName == "container_cpu_load_average_10s") {
+		return true
+	}
+	return false
 }
 
 func orgFromHash(hashStr string) int {
