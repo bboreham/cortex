@@ -212,6 +212,14 @@ func logWriteRetry(ctx context.Context, unprocessed dynamoDBWriteBatch) {
 	}
 }
 
+func logReadRetry(ctx context.Context, op string, unprocessed dynamoDBReadRequest) {
+	userID, _ := user.ExtractOrgID(ctx)
+	for table, reqs := range unprocessed {
+		dynamoThrottled.WithLabelValues(op, table).Add(float64(len(reqs.Keys)))
+		util.Event().Log("msg", "read retry", "table", table, "userID", userID)
+	}
+}
+
 // BatchWrite writes requests to the underlying storage, handling retries and backoff.
 // Structure is identical to getDynamoDBChunks(), but operating on different datatypes
 // so cannot share implementation.  If you fix a bug here fix it there too.
@@ -565,6 +573,7 @@ func (a dynamoDBStorageClient) getDynamoDBChunks(ctx context.Context, chunks []c
 			// If we get provisionedThroughputExceededException, then no items were processed,
 			// so back off and retry all.
 			if awsErr, ok := err.(awserr.Error); ok && ((awsErr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException) || request.Retryable()) {
+				logReadRetry(ctx, "DynamoDB.BatchGetItemPages", requests)
 				unprocessed.TakeReqs(requests, -1)
 				a.readThrottle.WaitN(ctx, len(requests))
 				backoff.Wait()
@@ -593,6 +602,7 @@ func (a dynamoDBStorageClient) getDynamoDBChunks(ctx context.Context, chunks []c
 
 		// If there are unprocessed items, retry those items.
 		if unprocessedKeys := response.UnprocessedKeys; unprocessedKeys != nil && dynamoDBReadRequest(unprocessedKeys).Len() > 0 {
+			logReadRetry(ctx, "DynamoDB.BatchGetItemPages", unprocessedKeys)
 			a.readThrottle.WaitN(ctx, len(unprocessedKeys))
 			unprocessed.TakeReqs(unprocessedKeys, -1)
 		}
