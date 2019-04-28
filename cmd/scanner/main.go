@@ -113,6 +113,8 @@ func main() {
 		// Pretend we have a queue that is always enormous and also always shrinking
 		trickQuery := "2000000000-timestamp(count(up))"
 		storageConfig.AWSStorageConfig.Metrics.QueueLengthQuery = trickQuery
+		// Reduce query window from 15m to 2m so we don't blur things so much
+		storageConfig.AWSStorageConfig.Metrics.UsageQuery = `sum(rate(cortex_dynamo_consumed_capacity_total{operation="DynamoDB.BatchWriteItem"}[2m])) by (table) > 0`
 
 		tableClient, err := storage.NewTableClient(rechunkConfig.Configs[0].IndexType, storageConfig)
 		util.CheckFatal("initializing table client", err)
