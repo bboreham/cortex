@@ -46,7 +46,7 @@ func Setup(fixture Fixture, tableName string) (chunk.IndexClient, chunk.ObjectCl
 		return nil, nil, err
 	}
 
-	err = tableManager.SyncTables(context.Background(), mtime.Now())
+	err = tableManager.SyncTables(context.Background(), mtime.Now(), mtime.Now())
 	if err != nil {
 		return nil, nil, err
 	}

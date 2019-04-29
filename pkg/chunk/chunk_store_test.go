@@ -82,7 +82,7 @@ func newTestChunkStoreConfig(t require.TestingT, schemaName string, storeCfg Sto
 	tableManager, err := NewTableManager(tbmConfig, schemaCfg, maxChunkAge, storage, nil)
 	require.NoError(t, err)
 
-	err = tableManager.SyncTables(context.Background(), mtime.Now())
+	err = tableManager.SyncTables(context.Background(), mtime.Now(), mtime.Now())
 	require.NoError(t, err)
 
 	var limits validation.Limits
