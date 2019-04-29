@@ -128,11 +128,17 @@ func main() {
 	err = chunkStore.(chunk.Store2).Scan(context.Background(), tableTime, tableTime, rechunkSchemaFile != "", callbacks)
 	checkFatal(err)
 
+	level.Info(util.Logger).Log("msg", "finished, shutting down")
 	if reindexStore != nil {
 		reindexStore.Stop()
 	}
 	if tm != nil {
 		tm.Stop()
+		// Sync tables as-at two weeks after, which should set them to inactive throughput
+		err = tm.SyncTables(context.Background(), tableTime.Time().Add(2*7*24*time.Hour), tableTime.Time())
+		if err != nil {
+			level.Error(util.Logger).Log("msg", "error syncing tables", "err", err)
+		}
 	}
 
 	totals := newSummary()
@@ -172,7 +178,7 @@ func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage
 	if err != nil {
 		return nil, errors.Wrap(err, "initializing table manager")
 	}
-	err = tm.SyncTables(context.Background(), tableTime.Time())
+	err = tm.SyncTables(context.Background(), tableTime.Time(), tableTime.Time())
 	if err != nil {
 		return nil, errors.Wrap(err, "sync tables")
 	}
@@ -195,7 +201,7 @@ func (m *tableManager) loop(atTime time.Time) {
 	for {
 		select {
 		case <-ticker.C:
-			if err := m.SyncTables(ctx, atTime); err != nil {
+			if err := m.SyncTables(ctx, atTime, atTime); err != nil {
 				level.Error(util.Logger).Log("msg", "error syncing tables", "err", err)
 			}
 		case <-m.done:
