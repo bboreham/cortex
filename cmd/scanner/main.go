@@ -155,6 +155,29 @@ type tableManager struct {
 }
 
 func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage.Config, rechunkConfig chunk.SchemaConfig, tableTime model.Time) (*tableManager, error) {
+	// We want our table-manager to manage just a two-week period
+	rechunkConfig.Configs[0].From.Time = tableTime
+	tbmConfig.CreationGracePeriod = time.Hour * 169
+
+	{
+		// First, run a pass with no metrics autoscaling, so we just get max throughput
+		scNoMetrics := storageConfig
+		scNoMetrics.AWSStorageConfig.Metrics.URL = ""
+		tcNoMetrics, err := storage.NewTableClient(rechunkConfig.Configs[0].IndexType, scNoMetrics)
+		if err != nil {
+			return nil, errors.Wrap(err, "creating table client")
+		}
+		tmNoMetrics, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tcNoMetrics, nil)
+		if err != nil {
+			return nil, errors.Wrap(err, "initializing table manager")
+		}
+		err = tmNoMetrics.SyncTables(context.Background(), tableTime.Time(), tableTime.Time())
+		if err != nil {
+			return nil, errors.Wrap(err, "sync tables")
+		}
+	}
+
+	// Now go back and create client and TableManager for real
 	// We need to "trick" the metrics auto-scaling into scaling up and down,
 	// even though we don't have a queue that it's used to looking at.
 	// Pretend we have a queue that is always enormous and also always shrinking
@@ -167,20 +190,12 @@ func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage
 	if err != nil {
 		return nil, errors.Wrap(err, "creating table client")
 	}
-
-	// We want our table-manager to manage just a two-week period
-	rechunkConfig.Configs[0].From.Time = tableTime
-	tbmConfig.CreationGracePeriod = time.Hour * 169
 	tm := &tableManager{
 		done: make(chan struct{}),
 	}
 	tm.TableManager, err = chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient, nil)
 	if err != nil {
 		return nil, errors.Wrap(err, "initializing table manager")
-	}
-	err = tm.SyncTables(context.Background(), tableTime.Time(), tableTime.Time())
-	if err != nil {
-		return nil, errors.Wrap(err, "sync tables")
 	}
 	// Sync continuously in background
 	go tm.loop(tableTime.Time())
