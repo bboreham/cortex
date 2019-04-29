@@ -247,7 +247,7 @@ func (m *TableManager) loop(ctx context.Context) error {
 	defer ticker.Stop()
 
 	if err := instrument.CollectedRequest(context.Background(), "TableManager.SyncTables", instrument.NewHistogramCollector(m.metrics.syncTableDuration), instrument.ErrorCode, func(ctx context.Context) error {
-		return m.SyncTables(ctx, mtime.Now().Add(m.cfg.CreationGracePeriod))
+		return m.SyncTables(ctx, mtime.Now(), mtime.Now().Add(m.cfg.CreationGracePeriod))
 	}); err != nil {
 		level.Error(util.Logger).Log("msg", "error syncing tables", "err", err)
 	}
@@ -263,7 +263,7 @@ func (m *TableManager) loop(ctx context.Context) error {
 		select {
 		case <-ticker.C:
 			if err := instrument.CollectedRequest(context.Background(), "TableManager.SyncTables", instrument.NewHistogramCollector(m.metrics.syncTableDuration), instrument.ErrorCode, func(ctx context.Context) error {
-				return m.SyncTables(ctx, mtime.Now())
+				return m.SyncTables(ctx, mtime.Now(), mtime.Now().Add(m.cfg.CreationGracePeriod))
 			}); err != nil {
 				level.Error(util.Logger).Log("msg", "error syncing tables", "err", err)
 			}
@@ -287,8 +287,8 @@ func (m *TableManager) bucketRetentionIteration(ctx context.Context) error {
 
 // SyncTables will calculate the tables expected to exist, create those that do
 // not and update those that need it.  It is exposed for testing.
-func (m *TableManager) SyncTables(ctx context.Context, atTime time.Time) error {
-	expected := m.calculateExpectedTables(atTime)
+func (m *TableManager) SyncTables(ctx context.Context, atTime, throughTime time.Time) error {
+	expected := m.calculateExpectedTables(atTime, throughTime)
 	level.Info(util.Logger).Log("msg", "synching tables", "expected_tables", len(expected))
 
 	toCreate, toCheckThroughput, toDelete, err := m.partitionTables(ctx, expected)
@@ -312,11 +312,11 @@ func (m *TableManager) SyncTables(ctx context.Context, atTime time.Time) error {
 	return nil
 }
 
-func (m *TableManager) calculateExpectedTables(atTime time.Time) []TableDesc {
+func (m *TableManager) calculateExpectedTables(atTime, throughTime time.Time) []TableDesc {
 	result := []TableDesc{}
 
 	for i, config := range m.schemaCfg.Configs {
-		if config.From.Time.Time().After(atTime) {
+		if config.From.Time.Time().After(throughTime) {
 			continue
 		}
 		if config.IndexTables.Period == 0 { // non-periodic table
@@ -358,7 +358,7 @@ func (m *TableManager) calculateExpectedTables(atTime time.Time) []TableDesc {
 			}
 			result = append(result, table)
 		} else {
-			endTime := atTime.Add(m.cfg.CreationGracePeriod)
+			endTime := throughTime.Add(m.cfg.CreationGracePeriod)
 			if i+1 < len(m.schemaCfg.Configs) {
 				nextFrom := m.schemaCfg.Configs[i+1].From.Time.Time()
 				if endTime.After(nextFrom) {
