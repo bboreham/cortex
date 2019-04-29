@@ -12,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
@@ -99,6 +100,7 @@ func main() {
 	defer chunkStore.Stop()
 
 	var reindexStore chunk.Store
+	var tm *tableManager
 	if rechunkSchemaFile != "" {
 		err := rechunkConfig.LoadFromFile(rechunkSchemaFile)
 		checkFatal(err)
@@ -107,7 +109,8 @@ func main() {
 		}
 		reindexStore, err = storage.NewStore(storageConfig, chunkStoreConfig, rechunkConfig, overrides)
 		checkFatal(err)
-		setupTableManager(tbmConfig, storageConfig, rechunkConfig, tableTime)
+		tm, err = setupTableManager(tbmConfig, storageConfig, rechunkConfig, tableTime)
+		checkFatal(err)
 	}
 
 	tableName, err = schemaConfig.ChunkTableFor(tableTime)
@@ -127,6 +130,9 @@ func main() {
 	if reindexStore != nil {
 		reindexStore.Stop()
 	}
+	if tm != nil {
+		tm.Stop()
+	}
 
 	totals := newSummary()
 	for segment := 0; segment < segments; segment++ {
@@ -135,7 +141,13 @@ func main() {
 	totals.print(deleteOrgs)
 }
 
-func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage.Config, rechunkConfig chunk.SchemaConfig, tableTime model.Time) {
+// wrap the "real" TableManager
+type tableManager struct {
+	*chunk.TableManager
+	done chan struct{}
+}
+
+func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage.Config, rechunkConfig chunk.SchemaConfig, tableTime model.Time) (*tableManager, error) {
 	// We need to "trick" the metrics auto-scaling into scaling up and down,
 	// even though we don't have a queue that it's used to looking at.
 	// Pretend we have a queue that is always enormous and also always shrinking
@@ -145,22 +157,38 @@ func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage
 	storageConfig.AWSStorageConfig.Metrics.UsageQuery = `sum(rate(cortex_dynamo_consumed_capacity_total{operation="DynamoDB.BatchWriteItem"}[2m])) by (table) > 0`
 
 	tableClient, err := storage.NewTableClient(rechunkConfig.Configs[0].IndexType, storageConfig)
-	util.CheckFatal("initializing table client", err)
+	if err != nil {
+		return nil, errors.Wrap(err, "creating table client")
+	}
 
 	// We want our table-manager to manage just a two-week period
 	rechunkConfig.Configs[0].From.Time = tableTime
 	tbmConfig.CreationGracePeriod = time.Hour * 169
-	tableManager, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient, nil)
-	util.CheckFatal("initializing table manager", err)
-	err = tableManager.SyncTables(context.Background(), tableTime.Time())
-	util.CheckFatal("sync tables", err)
+	tm := &tableManager{
+		done: make(chan struct{}),
+	}
+	tm.TableManager, err = chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient, nil)
+	if err != nil {
+		return nil, errors.Wrap(err, "initializing table manager")
+	}
+	err = tm.SyncTables(context.Background(), tableTime.Time())
+	if err != nil {
+		return nil, errors.Wrap(err, "sync tables")
+	}
 	time.Sleep(time.Minute) // allow time for tables to be created.  FIXME do this better
 	// Sync continuously in background
-	go tmLoop(context.Background(), tableManager, tableTime.Time())
+	go tm.loop(tableTime.Time())
+	return tm, nil
+}
+
+func (m *tableManager) Stop() {
+	// Send on chan rather than close() so we don't return until the send is received
+	m.done <- struct{}{}
 }
 
 // Sync like the real table-manager does, but at the specific time we are operating
-func tmLoop(ctx context.Context, m *chunk.TableManager, atTime time.Time) {
+func (m *tableManager) loop(atTime time.Time) {
+	ctx := context.Background()
 	ticker := time.NewTicker(5 * time.Minute)
 	defer ticker.Stop()
 
@@ -170,6 +198,8 @@ func tmLoop(ctx context.Context, m *chunk.TableManager, atTime time.Time) {
 			if err := m.SyncTables(ctx, atTime); err != nil {
 				level.Error(util.Logger).Log("msg", "error syncing tables", "err", err)
 			}
+		case <-m.done:
+			return
 		}
 	}
 }
