@@ -107,28 +107,7 @@ func main() {
 		}
 		reindexStore, err = storage.NewStore(storageConfig, chunkStoreConfig, rechunkConfig, overrides)
 		checkFatal(err)
-
-		// We need to "trick" the metrics auto-scaling into scaling up and down,
-		// even though we don't have a queue that it's used to looking at.
-		// Pretend we have a queue that is always enormous and also always shrinking
-		trickQuery := "2000000000-timestamp(count(up))"
-		storageConfig.AWSStorageConfig.Metrics.QueueLengthQuery = trickQuery
-		// Reduce query window from 15m to 2m so we don't blur things so much
-		storageConfig.AWSStorageConfig.Metrics.UsageQuery = `sum(rate(cortex_dynamo_consumed_capacity_total{operation="DynamoDB.BatchWriteItem"}[2m])) by (table) > 0`
-
-		tableClient, err := storage.NewTableClient(rechunkConfig.Configs[0].IndexType, storageConfig)
-		util.CheckFatal("initializing table client", err)
-
-		// We want our table-manager to manage just a two-week period
-		rechunkConfig.Configs[0].From.Time = tableTime
-		tbmConfig.CreationGracePeriod = time.Hour * 169
-		tableManager, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient, nil)
-		util.CheckFatal("initializing table manager", err)
-		err = tableManager.SyncTables(context.Background(), tableTime.Time())
-		util.CheckFatal("sync tables", err)
-		time.Sleep(time.Minute) // allow time for tables to be created.  FIXME do this better
-		// Sync continuously in background
-		go tmLoop(context.Background(), tableManager, tableTime.Time())
+		setupTableManager(tbmConfig, storageConfig, rechunkConfig, tableTime)
 	}
 
 	tableName, err = schemaConfig.ChunkTableFor(tableTime)
@@ -154,6 +133,30 @@ func main() {
 		totals.accumulate(handlers[segment].summary)
 	}
 	totals.print(deleteOrgs)
+}
+
+func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage.Config, rechunkConfig chunk.SchemaConfig, tableTime model.Time) {
+	// We need to "trick" the metrics auto-scaling into scaling up and down,
+	// even though we don't have a queue that it's used to looking at.
+	// Pretend we have a queue that is always enormous and also always shrinking
+	trickQuery := "2000000000-timestamp(count(up))"
+	storageConfig.AWSStorageConfig.Metrics.QueueLengthQuery = trickQuery
+	// Reduce query window from 15m to 2m so we don't blur things so much
+	storageConfig.AWSStorageConfig.Metrics.UsageQuery = `sum(rate(cortex_dynamo_consumed_capacity_total{operation="DynamoDB.BatchWriteItem"}[2m])) by (table) > 0`
+
+	tableClient, err := storage.NewTableClient(rechunkConfig.Configs[0].IndexType, storageConfig)
+	util.CheckFatal("initializing table client", err)
+
+	// We want our table-manager to manage just a two-week period
+	rechunkConfig.Configs[0].From.Time = tableTime
+	tbmConfig.CreationGracePeriod = time.Hour * 169
+	tableManager, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient, nil)
+	util.CheckFatal("initializing table manager", err)
+	err = tableManager.SyncTables(context.Background(), tableTime.Time())
+	util.CheckFatal("sync tables", err)
+	time.Sleep(time.Minute) // allow time for tables to be created.  FIXME do this better
+	// Sync continuously in background
+	go tmLoop(context.Background(), tableManager, tableTime.Time())
 }
 
 // Sync like the real table-manager does, but at the specific time we are operating
