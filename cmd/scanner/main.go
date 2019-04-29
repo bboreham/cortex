@@ -111,6 +111,7 @@ func main() {
 		checkFatal(err)
 		tm, err = setupTableManager(tbmConfig, storageConfig, rechunkConfig, tableTime)
 		checkFatal(err)
+		time.Sleep(time.Minute) // allow time for tables to be created.  FIXME do this better
 	}
 
 	tableName, err = schemaConfig.ChunkTableFor(tableTime)
@@ -175,7 +176,6 @@ func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage
 	if err != nil {
 		return nil, errors.Wrap(err, "sync tables")
 	}
-	time.Sleep(time.Minute) // allow time for tables to be created.  FIXME do this better
 	// Sync continuously in background
 	go tm.loop(tableTime.Time())
 	return tm, nil
