@@ -209,8 +209,9 @@ func (m *tableManager) Stop() {
 
 // Sync like the real table-manager does, but at the specific time we are operating
 func (m *tableManager) loop(atTime time.Time) {
+	time.Sleep(6 * time.Minute) // wait a bit to allow perf to settle
 	ctx := context.Background()
-	ticker := time.NewTicker(5 * time.Minute)
+	ticker := time.NewTicker(2 * time.Minute)
 	defer ticker.Stop()
 
 	for {
