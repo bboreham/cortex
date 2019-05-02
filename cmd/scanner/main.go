@@ -407,6 +407,7 @@ func orgFromHash(hashStr string) int {
 func checkFatal(err error) {
 	if err != nil {
 		level.Error(util.Logger).Log("msg", "fatal error", "err", err)
+		fmt.Fprintf(os.Stderr, "%+v", err)
 		os.Exit(1)
 	}
 }
