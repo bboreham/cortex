@@ -158,7 +158,7 @@ func (d dynamoTableClient) CreateTable(ctx context.Context, desc chunk.TableDesc
 			}
 			output, err := d.DynamoDB.CreateTableWithContext(ctx, input)
 			if err != nil {
-				return err
+				return errors.Wrap(err, "creating table")
 			}
 			if output.TableDescription != nil {
 				tableARN = output.TableDescription.TableArn
@@ -185,7 +185,7 @@ func (d dynamoTableClient) CreateTable(ctx context.Context, desc chunk.TableDesc
 					Tags:        tags,
 				})
 				if relevantError(err) {
-					return err
+					return errors.Wrap(err, "applying tags")
 				}
 				return nil
 			})
