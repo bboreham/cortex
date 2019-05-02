@@ -405,16 +405,16 @@ func (m *TableManager) updateTables(ctx context.Context, descriptions []TableDes
 
 func (m *TableManager) WaitForAllActive(ctx context.Context, atTime, throughTime time.Time) error {
 	expected := m.calculateExpectedTables(atTime, throughTime)
-	level.Info(util.Logger).Log("msg", "waiting for tables active", "num_expected_tables", len(expected))
 	for {
 		allActive := true
-		for _, expected := range expected {
-			_, isActive, err := m.client.DescribeTable(ctx, expected.Name)
+		for _, table := range expected {
+			_, isActive, err := m.client.DescribeTable(ctx, table.Name)
 			if err != nil {
 				return err
 			}
 			if !isActive {
 				allActive = false
+				level.Info(util.Logger).Log("msg", "table not active", "table", table.Name)
 				break
 			}
 		}
