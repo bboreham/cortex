@@ -113,7 +113,6 @@ func main() {
 		checkFatal(err)
 		tm, err = setupTableManager(tbmConfig, storageConfig, rechunkConfig, tableTime)
 		checkFatal(err)
-		time.Sleep(time.Minute) // allow time for tables to be created.  FIXME do this better
 	}
 
 	tableName, err = schemaConfig.ChunkTableFor(tableTime)
@@ -124,6 +123,10 @@ func main() {
 	checkFatal(err)
 	prevReadCapacity, err := setReadCapacity(context.Background(), readClient, tableName, 2000)
 	checkFatal(err)
+
+	if tm != nil {
+		tm.WaitForAllActive(context.Background(), tableTime.Time(), tableTime.Time())
+	}
 
 	handlers := make([]handler, segments)
 	callbacks := make([]func(result chunk.ReadBatch), segments)
