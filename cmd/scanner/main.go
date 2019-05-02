@@ -22,6 +22,7 @@ import (
 	"github.com/weaveworks/common/logging"
 
 	"github.com/cortexproject/cortex/pkg/chunk"
+	"github.com/cortexproject/cortex/pkg/chunk/encoding"
 	"github.com/cortexproject/cortex/pkg/chunk/storage"
 	"github.com/cortexproject/cortex/pkg/util"
 	"github.com/cortexproject/cortex/pkg/util/flagext"
@@ -46,6 +47,7 @@ func main() {
 		rechunkConfig    chunk.SchemaConfig
 		storageConfig    storage.Config
 		chunkStoreConfig chunk.StoreConfig
+		encodingConfig   encoding.Config
 		tbmConfig        chunk.TableManagerConfig
 
 		deleteOrgsFile string
@@ -60,7 +62,7 @@ func main() {
 		rechunkSchemaFile string
 	)
 
-	flagext.RegisterFlags(&storageConfig, &schemaConfig, &chunkStoreConfig, &tbmConfig)
+	flagext.RegisterFlags(&storageConfig, &schemaConfig, &chunkStoreConfig, &encodingConfig, &tbmConfig)
 	flag.StringVar(&address, "address", ":6060", "Address to listen on, for profiling, etc.")
 	flag.Int64Var(&week, "week", 0, "Week number to scan, e.g. 2497 (0 means current week)")
 	flag.IntVar(&segments, "segments", 1, "Number of segments to read in parallel")
