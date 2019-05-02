@@ -3,6 +3,7 @@ package aws
 import (
 	"context"
 	"strings"
+	"time"
 
 	"github.com/aws/aws-sdk-go/aws"
 	"github.com/aws/aws-sdk-go/aws/awserr"
@@ -178,6 +179,7 @@ func (d dynamoTableClient) CreateTable(ctx context.Context, desc chunk.TableDesc
 
 	tags := chunkTagsToDynamoDB(desc.Tags)
 	if len(tags) > 0 {
+		time.Sleep(30 * time.Second)
 		return d.backoffAndRetry(ctx, func(ctx context.Context) error {
 			return instrument.CollectedRequest(ctx, "DynamoDB.TagResource", dynamoRequestDuration, instrument.ErrorCode, func(ctx context.Context) error {
 				_, err := d.DynamoDB.TagResourceWithContext(ctx, &dynamodb.TagResourceInput{
