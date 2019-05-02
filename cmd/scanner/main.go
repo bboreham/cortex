@@ -120,6 +120,11 @@ func main() {
 	checkFatal(err)
 	fmt.Printf("table %s\n", tableName)
 
+	readClient, err := storage.NewTableClient("aws", storageConfig)
+	checkFatal(err)
+	prevReadCapacity, err := setReadCapacity(context.Background(), readClient, tableName, 2000)
+	checkFatal(err)
+
 	handlers := make([]handler, segments)
 	callbacks := make([]func(result chunk.ReadBatch), segments)
 	for segment := 0; segment < segments; segment++ {
@@ -134,6 +139,9 @@ func main() {
 	if reindexStore != nil {
 		reindexStore.Stop()
 	}
+	// Set back as it was before
+	_, err = setReadCapacity(context.Background(), readClient, tableName, prevReadCapacity)
+	checkFatal(err)
 	if tm != nil {
 		tm.Stop()
 		// Sync tables as-at two weeks after, which should set them to inactive throughput
@@ -202,6 +210,26 @@ func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage
 	// Sync continuously in background
 	go tm.loop(tableTime.Time())
 	return tm, nil
+}
+
+func setReadCapacity(ctx context.Context, client chunk.TableClient, tableName string, val int64) (int64, error) {
+	current, _, err := client.DescribeTable(ctx, tableName)
+	if err != nil {
+		return 0, err
+	}
+	prevReadCapacity := current.ProvisionedRead
+	if current.UseOnDemandIOMode {
+		prevReadCapacity = 0
+	}
+	updated := current
+	if val > 0 {
+		updated.ProvisionedRead = val
+		updated.UseOnDemandIOMode = false
+	} else {
+		updated.UseOnDemandIOMode = true
+	}
+	err = client.UpdateTable(ctx, current, updated)
+	return prevReadCapacity, err
 }
 
 func (m *tableManager) Stop() {
