@@ -231,6 +231,9 @@ func setReadCapacity(ctx context.Context, client chunk.TableClient, tableName st
 	} else {
 		updated.UseOnDemandIOMode = true
 	}
+	if updated.ProvisionedWrite == 0 {
+		updated.ProvisionedWrite = 1
+	}
 	err = client.UpdateTable(ctx, current, updated)
 	return prevReadCapacity, err
 }
