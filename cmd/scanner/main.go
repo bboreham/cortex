@@ -17,6 +17,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/model"
+	"github.com/prometheus/prometheus/pkg/labels"
 
 	"github.com/go-kit/kit/log/level"
 	"github.com/weaveworks/common/logging"
@@ -392,6 +393,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			}
 			{
 				if reEncodeChunks {
+					removeBlanks(&ch.Metric)
 					err = ch.Encode()
 					if err != nil {
 						level.Error(util.Logger).Log("msg", "re-encode error", "err", err)
@@ -420,6 +422,17 @@ func isBogus(metricName string) bool {
 		return true
 	}
 	return false
+}
+
+func removeBlanks(a *labels.Labels) {
+	for i := 0; i < len(*a); {
+		if len((*a)[i].Value) == 0 {
+			// Delete by moving up remaining elements
+			(*a) = append((*a)[:i], (*a)[i+1:]...)
+			continue // go round and check the data that is now at position i
+		}
+		i++
+	}
 }
 
 func orgFromHash(hashStr string) int {
