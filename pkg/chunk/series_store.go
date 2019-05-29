@@ -229,6 +229,39 @@ func (c *seriesStore) LabelNamesForMetricName(ctx context.Context, userID string
 	return labelNamesFromChunks(allChunks), nil
 }
 
+func (c *seriesStore) DoneThisSeriesBefore(chunk Chunk) bool {
+	metricName := chunk.Metric.Get(labels.MetricName)
+	if metricName == "" {
+		return false
+	}
+	keys, _, err := c.schema.GetCacheKeysAndLabelWriteEntries(chunk.From, chunk.From, chunk.UserID, metricName, chunk.Metric, chunk.ExternalKey())
+	if err != nil {
+		return false
+	}
+	_, _, missing := c.writeDedupeCache.Fetch(context.Background(), keys)
+	return len(missing) == 0
+}
+
+func (c *seriesStore) AllChunksForSeries(ctx context.Context, userID string, labels labels.Labels, from, through model.Time) ([]Chunk, error) {
+	seriesID := labelsSeriesID(labels)
+	seriesIDs := []string{string(seriesID)}
+	chunkIDs, err := c.lookupChunksBySeries(ctx, from, through, userID, seriesIDs)
+	if err != nil {
+		return nil, err
+	}
+	chunks, err := c.convertChunkIDsToChunks(ctx, userID, chunkIDs)
+	if err != nil {
+		return nil, err
+	}
+	keys := keysFromChunks(chunks)
+	chunksPerQuery.Observe(float64(len(chunks)))
+	allChunks, err := c.FetchChunks(ctx, chunks, keys)
+	if err != nil {
+		return nil, err
+	}
+	return allChunks, nil
+}
+
 func (c *seriesStore) lookupSeriesByMetricNameMatchers(ctx context.Context, from, through model.Time, userID, metricName string, matchers []*labels.Matcher) ([]string, error) {
 	log, ctx := spanlogger.New(ctx, "SeriesStore.lookupSeriesByMetricNameMatchers", "metricName", metricName, "matchers", len(matchers))
 	defer log.Span.Finish()
