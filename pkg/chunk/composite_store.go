@@ -45,6 +45,8 @@ type Store interface {
 type Store2 interface {
 	Store
 	Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error
+	DoneThisSeriesBefore(Chunk) bool
+	AllChunksForSeries(ctx context.Context, userID string, labels labels.Labels, from, through model.Time) ([]Chunk, error)
 }
 
 // CompositeStore is a Store which delegates to various stores depending
@@ -122,6 +124,25 @@ func (c compositeStore) Scan(ctx context.Context, from, through model.Time, with
 	return c.forStores(from, through, func(from, through model.Time, store Store) error {
 		return store.(Store2).Scan(ctx, from, through, withValue, callbacks)
 	})
+}
+
+func (c compositeStore) DoneThisSeriesBefore(ch Chunk) bool {
+	doneBefore := false
+	c.forStores(ch.From, ch.Through, func(from, through model.Time, store Store) error {
+		doneBefore = doneBefore || store.(Store2).DoneThisSeriesBefore(ch)
+		return nil
+	})
+	return doneBefore
+}
+
+func (c compositeStore) AllChunksForSeries(ctx context.Context, userID string, labels labels.Labels, from, through model.Time) ([]Chunk, error) {
+	var ret []Chunk
+	err := c.forStores(from, through, func(from, through model.Time, store Store) error {
+		chunks, err := store.(Store2).AllChunksForSeries(ctx, userID, labels, from, through)
+		ret = append(ret, chunks...)
+		return err
+	})
+	return ret, err
 }
 
 func (c compositeStore) Get(ctx context.Context, userID string, from, through model.Time, matchers ...*labels.Matcher) ([]Chunk, error) {

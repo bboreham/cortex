@@ -21,10 +21,12 @@ import (
 
 	"github.com/go-kit/kit/log/level"
 	"github.com/weaveworks/common/logging"
+	"github.com/weaveworks/common/user"
 
 	"github.com/cortexproject/cortex/pkg/chunk"
 	"github.com/cortexproject/cortex/pkg/chunk/encoding"
 	"github.com/cortexproject/cortex/pkg/chunk/storage"
+	"github.com/cortexproject/cortex/pkg/querier/batch"
 	"github.com/cortexproject/cortex/pkg/util"
 	"github.com/cortexproject/cortex/pkg/util/flagext"
 	"github.com/cortexproject/cortex/pkg/util/validation"
@@ -38,6 +40,7 @@ var (
 	}, []string{"table"})
 
 	reEncodeChunks bool
+	fullDedupe     bool
 
 	removeBogusKubeletMetrics bool
 )
@@ -76,6 +79,7 @@ func main() {
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&rechunkSchemaFile, "rechunk-yaml", "", "Yaml definition of new chunk tables (blank to disable)")
 	flag.BoolVar(&reEncodeChunks, "re-encode-chunks", false, "Enable re-encoding of chunks to save on storing zeros")
+	flag.BoolVar(&fullDedupe, "full-dedupe", false, "Dedupe all samples and write result as single chunk per series")
 	flag.BoolVar(&removeBogusKubeletMetrics, "remove-bogus-kubelet", false, "Remove bogus Kubelete metrics from the output")
 
 	flag.Parse()
@@ -136,7 +140,8 @@ func main() {
 	handlers := make([]handler, segments)
 	callbacks := make([]func(result chunk.ReadBatch), segments)
 	for segment := 0; segment < segments; segment++ {
-		handlers[segment] = newHandler(reindexStore, tableName, includeOrgs, deleteOrgs)
+		// This only works for series-store, i.e. schema v9 and v10
+		handlers[segment] = newHandler(chunkStore.(chunk.Store2), reindexStore.(chunk.Store2), tableName, includeOrgs, deleteOrgs)
 		callbacks[segment] = handlers[segment].handlePage
 	}
 
@@ -331,7 +336,8 @@ func (s summary) print(deleteOrgs map[int]struct{}) {
 }
 
 type handler struct {
-	store       chunk.Store
+	readStore   chunk.Store2
+	writeStore  chunk.Store2
 	tableName   string
 	pages       int
 	includeOrgs map[int]struct{}
@@ -339,12 +345,13 @@ type handler struct {
 	summary
 }
 
-func newHandler(store chunk.Store, tableName string, includeOrgs map[int]struct{}, deleteOrgs map[int]struct{}) handler {
+func newHandler(readStore, writeStore chunk.Store2, tableName string, includeOrgs map[int]struct{}, deleteOrgs map[int]struct{}) handler {
 	if len(includeOrgs) == 0 {
 		includeOrgs = nil
 	}
 	return handler{
-		store:       store,
+		readStore:   readStore,
+		writeStore:  writeStore,
 		tableName:   tableName,
 		includeOrgs: includeOrgs,
 		deleteOrgs:  deleteOrgs,
@@ -383,7 +390,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			//request := h.storageClient.NewWriteBatch()
 			//request.AddDelete(h.tableName, hashValue, i.RangeValue())
 			//			h.requests <- request
-		} else if h.store != nil {
+		} else if h.writeStore != nil {
 			var ch chunk.Chunk
 			err := ch.Decode(decodeContext, i.Value())
 			if err != nil {
@@ -395,6 +402,21 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			if isBogus(metricName) {
 				continue
 			}
+			if fullDedupe {
+				if h.writeStore.DoneThisSeriesBefore(ch) {
+					// relying on series store writing the memcache entry to make this true
+					// so we are doing two reads per write :-(
+					// If we use schema v6 on write then need to do the memcache write ourselves
+					continue
+				}
+				newChunk, err := dedupe(h.readStore, ch)
+				if err != nil {
+					level.Error(util.Logger).Log("msg", "chunk dedupe error", "err", err)
+					continue
+				}
+				ch = *newChunk
+				// TODO: Copy through all chunks that span into next table, for when we stop re-indexing
+			}
 			{
 				if reEncodeChunks {
 					removeBlanks(&ch.Metric)
@@ -405,7 +427,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 					}
 				}
 				for {
-					err = h.store.Put(ctx, []chunk.Chunk{ch})
+					err = h.writeStore.Put(ctx, []chunk.Chunk{ch})
 					if err != nil {
 						level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
 						continue
@@ -415,6 +437,63 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			}
 		}
 	}
+}
+
+func dedupe(dstore chunk.Store2, ch chunk.Chunk) (*chunk.Chunk, error) {
+	const millisecondsInDay = model.Time(24 * time.Hour / time.Millisecond)
+	// Fetch the whole day that this date is in
+	from := ch.From - (ch.From % millisecondsInDay)
+	through := from + millisecondsInDay
+	// FIXME: this shouldn't really be necessary, but store query APIs rely on it
+	ctx := user.InjectOrgID(context.Background(), ch.UserID)
+	chunks, err := dstore.AllChunksForSeries(ctx, ch.UserID, ch.Metric, from, through)
+	if err != nil {
+		return nil, err
+	}
+	data, first, last, err := dataFromChunks(from, through, chunks)
+	if err != nil {
+		return nil, err
+	}
+	ret := &chunk.Chunk{
+		Fingerprint: ch.Fingerprint,
+		UserID:      ch.UserID,
+		From:        model.Time(first),
+		Through:     model.Time(last),
+		Metric:      ch.Metric,
+		Encoding:    encoding.Bigchunk,
+		Data:        data,
+	}
+	err = ret.Encode()
+	if err != nil {
+		return nil, err
+	}
+	return ret, nil
+}
+
+// unpack and dedupe all samples from previous chunks; create one new chunk.
+func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encoding.Chunk, first, last int64, err error) {
+	ret, err = encoding.NewForEncoding(encoding.Bigchunk)
+	if err != nil {
+		return
+	}
+	iter := batch.NewChunkMergeIterator(chunks, 0, 0)
+	if !iter.Seek(int64(from)) {
+		err = fmt.Errorf("Could not seek to start time")
+		return
+	}
+	first, _ = iter.At()
+	for {
+		ts, v := iter.At()
+		if ts >= int64(through) {
+			break
+		}
+		last = ts
+		ret.Add(model.SamplePair{Timestamp: model.Time(ts), Value: model.SampleValue(v)})
+		if !iter.Next() {
+			break
+		}
+	}
+	return
 }
 
 func isBogus(metricName string) bool {
