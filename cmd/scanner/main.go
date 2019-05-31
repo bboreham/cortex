@@ -418,22 +418,21 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		}
 		metricName := newChunk.Metric.Get(labels.MetricName)
 		h.counts[org][metricName]++
-		if isBogus(metricName) {
-			continue
-		}
-		// TODO: Copy through all chunks that span into next table, for when we stop re-indexing
-		for {
-			err = h.writeStore.Put(ctx, []chunk.Chunk{*newChunk})
-			if err != nil {
-				level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
-				continue
+		if !isBogus(metricName) {
+			for {
+				err = h.writeStore.Put(ctx, []chunk.Chunk{*newChunk})
+				if err != nil {
+					level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
+					continue
+				}
+				break
 			}
-			break
 		}
 		// This cache write may duplicate what the store did, but we can't
 		// guarantee it's v9+, and don't know we have the same series IDs as it has
 		h.writeStore.MarkThisSeriesDone(context.TODO(), from, through, hashParts[0], seriesID)
 	}
+	// TODO: Copy through all chunks that span into next table, for when we stop re-indexing
 }
 
 func decodeDayNumber(day string) (model.Time, model.Time, error) {
