@@ -178,9 +178,9 @@ type tableManager struct {
 }
 
 func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage.Config, rechunkConfig chunk.SchemaConfig, tableTime model.Time) (*tableManager, error) {
-	// We want our table-manager to manage just a two-week period
+	// We want our table-manager to manage just a one-week period
 	rechunkConfig.Configs[0].From.Time = tableTime
-	tbmConfig.CreationGracePeriod = time.Hour * 169
+	tbmConfig.CreationGracePeriod = time.Hour * 1
 
 	{
 		// First, run a pass with no metrics autoscaling, so we just get max throughput
