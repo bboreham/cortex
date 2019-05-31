@@ -32,8 +32,9 @@ type Store interface {
 type Store2 interface {
 	Store
 	Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error
-	DoneThisSeriesBefore(Chunk) bool
-	AllChunksForSeries(ctx context.Context, userID string, labels labels.Labels, from, through model.Time) ([]Chunk, error)
+	DoneThisSeriesBefore(from, through model.Time, userID, seriesID string) bool
+	MarkThisSeriesDone(ctx context.Context, from, through model.Time, userID, seriesID string)
+	AllChunksForSeries(ctx context.Context, userID, seriesID string, from, through model.Time) ([]Chunk, error)
 }
 
 // CompositeStore is a Store which delegates to various stores depending
@@ -99,19 +100,26 @@ func (c compositeStore) Scan(ctx context.Context, from, through model.Time, with
 	})
 }
 
-func (c compositeStore) DoneThisSeriesBefore(ch Chunk) bool {
+func (c compositeStore) DoneThisSeriesBefore(from, through model.Time, userID, seriesID string) bool {
 	doneBefore := false
-	c.forStores(ch.From, ch.Through, func(from, through model.Time, store Store) error {
-		doneBefore = doneBefore || store.(Store2).DoneThisSeriesBefore(ch)
+	c.forStores(from, through, func(from, through model.Time, store Store) error {
+		doneBefore = doneBefore || store.(Store2).DoneThisSeriesBefore(from, through, userID, seriesID)
 		return nil
 	})
 	return doneBefore
 }
 
-func (c compositeStore) AllChunksForSeries(ctx context.Context, userID string, labels labels.Labels, from, through model.Time) ([]Chunk, error) {
+func (c compositeStore) MarkThisSeriesDone(ctx context.Context, from, through model.Time, userID, seriesID string) {
+	c.forStores(from, through, func(from, through model.Time, store Store) error {
+		store.(Store2).MarkThisSeriesDone(ctx, from, through, userID, seriesID)
+		return nil
+	})
+}
+
+func (c compositeStore) AllChunksForSeries(ctx context.Context, userID, seriesID string, from, through model.Time) ([]Chunk, error) {
 	var ret []Chunk
 	err := c.forStores(from, through, func(from, through model.Time, store Store) error {
-		chunks, err := store.(Store2).AllChunksForSeries(ctx, userID, labels, from, through)
+		chunks, err := store.(Store2).AllChunksForSeries(ctx, userID, seriesID, from, through)
 		ret = append(ret, chunks...)
 		return err
 	})

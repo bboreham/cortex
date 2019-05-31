@@ -18,7 +18,7 @@ import (
 // parallel, calling back with batches of results on one of the
 // callbacks for each goroutine.
 func (a dynamoDBStorageClient) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error {
-	tableName, err := a.schemaCfg.ChunkTableFor(from) // FIXME ignoring 'through'
+	tableName, err := a.schemaCfg.IndexTableFor(from) // FIXME ignoring 'through'
 	if err != nil {
 		return err
 	}

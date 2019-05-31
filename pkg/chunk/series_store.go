@@ -229,21 +229,19 @@ func (c *seriesStore) LabelNamesForMetricName(ctx context.Context, userID string
 	return labelNamesFromChunks(allChunks), nil
 }
 
-func (c *seriesStore) DoneThisSeriesBefore(chunk Chunk) bool {
-	metricName := chunk.Metric.Get(labels.MetricName)
-	if metricName == "" {
-		return false
-	}
-	keys, _, err := c.schema.GetCacheKeysAndLabelWriteEntries(chunk.From, chunk.From, chunk.UserID, metricName, chunk.Metric, chunk.ExternalKey())
-	if err != nil {
-		return false
-	}
+func (c *seriesStore) DoneThisSeriesBefore(from, through model.Time, userID, seriesID string) bool {
+	keys := c.schema.GetLabelEntryCacheKeys2(from, through, userID, seriesID)
 	_, _, missing := c.writeDedupeCache.Fetch(context.Background(), keys)
 	return len(missing) == 0
 }
 
-func (c *seriesStore) AllChunksForSeries(ctx context.Context, userID string, labels labels.Labels, from, through model.Time) ([]Chunk, error) {
-	seriesID := labelsSeriesID(labels)
+func (c *seriesStore) MarkThisSeriesDone(ctx context.Context, from, through model.Time, userID, seriesID string) {
+	keys := c.schema.GetLabelEntryCacheKeys2(from, through, userID, seriesID)
+	bufs := make([][]byte, len(keys))
+	c.writeDedupeCache.Store(ctx, keys, bufs)
+}
+
+func (c *seriesStore) AllChunksForSeries(ctx context.Context, userID string, seriesID string, from, through model.Time) ([]Chunk, error) {
 	seriesIDs := []string{string(seriesID)}
 	chunkIDs, err := c.lookupChunksBySeries(ctx, from, through, userID, seriesIDs)
 	if err != nil {
