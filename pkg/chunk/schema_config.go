@@ -429,6 +429,16 @@ func (cfg *PeriodicTableConfig) periodicTables(atTime time.Time, from, through m
 	return result
 }
 
+// IndexTableFor calculates the index table shard for a given point in time.
+func (cfg SchemaConfig) IndexTableFor(t model.Time) (string, error) {
+	for i := range cfg.Configs {
+		if t >= cfg.Configs[i].From.Time && (i+1 == len(cfg.Configs) || t < cfg.Configs[i+1].From.Time) {
+			return cfg.Configs[i].IndexTables.TableFor(t), nil
+		}
+	}
+	return "", fmt.Errorf("no index table found for time %v", t)
+}
+
 // ChunkTableFor calculates the chunk table shard for a given point in time.
 func (cfg SchemaConfig) ChunkTableFor(t model.Time) (string, error) {
 	for i := range cfg.Configs {

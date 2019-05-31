@@ -68,6 +68,7 @@ type SeriesStoreSchema interface {
 	// returns cache key string and []IndexEntry per bucket, matched in order
 	GetCacheKeysAndLabelWriteEntries(from, through model.Time, userID string, metricName string, labels labels.Labels, chunkID string) ([]string, [][]IndexEntry, error)
 	GetChunkWriteEntries(from, through model.Time, userID string, metricName string, labels labels.Labels, chunkID string) ([]IndexEntry, error)
+	GetLabelEntryCacheKeys2(from, through model.Time, userID, seriesID string) []string
 
 	// If the query resulted in series IDs, use this method to find chunks.
 	GetChunksForSeries(from, through model.Time, userID string, seriesID []byte) ([]IndexQuery, error)
@@ -198,6 +199,27 @@ func (s seriesStoreSchema) GetChunkWriteEntries(from, through model.Time, userID
 	}
 	return result, nil
 
+}
+
+// Should only used for v9Schema
+func (s schema) GetLabelEntryCacheKeys2(from, through model.Time, userID string, seriesID string) []string {
+	var result []string
+	for _, bucket := range s.buckets(from, through, userID) {
+		key := strings.Join([]string{
+			bucket.tableName,
+			bucket.hashKey,
+			seriesID,
+		},
+			"-",
+		)
+		// This is just encoding to remove invalid characters so that we can put them in memcache.
+		// We're not hashing them as the length of the key is well within memcache bounds. tableName + userid + day + 32Byte(seriesID)
+		key = hex.EncodeToString([]byte(key))
+
+		result = append(result, key)
+	}
+
+	return result
 }
 
 func (s baseSchema) GetReadQueriesForMetric(from, through model.Time, userID string, metricName string) ([]IndexQuery, error) {

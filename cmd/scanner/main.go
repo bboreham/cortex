@@ -39,9 +39,6 @@ var (
 		Help:      "Total count of pages scanned from a table",
 	}, []string{"table"})
 
-	reEncodeChunks bool
-	fullDedupe     bool
-
 	removeBogusKubeletMetrics bool
 )
 
@@ -57,11 +54,10 @@ func main() {
 		deleteOrgsFile string
 		includeOrgsStr string
 
-		week      int64
-		segments  int
-		tableName string
-		loglevel  string
-		address   string
+		week     int64
+		segments int
+		loglevel string
+		address  string
 
 		chunkReadCapacity int64
 		indexReadCapacity int64
@@ -78,8 +74,6 @@ func main() {
 	flag.StringVar(&includeOrgsStr, "include-orgs", "", "IDs of orgs to include (space-separated)")
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&rechunkSchemaFile, "rechunk-yaml", "", "Yaml definition of new chunk tables (blank to disable)")
-	flag.BoolVar(&reEncodeChunks, "re-encode-chunks", false, "Enable re-encoding of chunks to save on storing zeros")
-	flag.BoolVar(&fullDedupe, "full-dedupe", false, "Dedupe all samples and write result as single chunk per series")
 	flag.BoolVar(&removeBogusKubeletMetrics, "remove-bogus-kubelet", false, "Remove bogus Kubelete metrics from the output")
 
 	flag.Parse()
@@ -124,13 +118,17 @@ func main() {
 		checkFatal(err)
 	}
 
-	tableName, err = schemaConfig.ChunkTableFor(tableTime)
+	tableName, err := schemaConfig.ChunkTableFor(tableTime)
 	checkFatal(err)
 	fmt.Printf("table %s\n", tableName)
+	indexTableName, err := schemaConfig.IndexTableFor(tableTime)
+	checkFatal(err)
 
 	readClient, err := storage.NewTableClient("aws", storageConfig)
 	checkFatal(err)
 	prevReadCapacity, err := setReadCapacity(context.Background(), readClient, tableName, chunkReadCapacity)
+	checkFatal(err)
+	prevIndexReadCapacity, err := setReadCapacity(context.Background(), readClient, indexTableName, indexReadCapacity)
 	checkFatal(err)
 
 	if tm != nil {
@@ -141,11 +139,11 @@ func main() {
 	callbacks := make([]func(result chunk.ReadBatch), segments)
 	for segment := 0; segment < segments; segment++ {
 		// This only works for series-store, i.e. schema v9 and v10
-		handlers[segment] = newHandler(chunkStore.(chunk.Store2), reindexStore.(chunk.Store2), tableName, includeOrgs, deleteOrgs)
+		handlers[segment] = newHandler(chunkStore.(chunk.Store2), reindexStore.(chunk.Store2), indexTableName, includeOrgs, deleteOrgs)
 		callbacks[segment] = handlers[segment].handlePage
 	}
 
-	err = chunkStore.(chunk.Store2).Scan(context.Background(), tableTime, tableTime, rechunkSchemaFile != "", callbacks)
+	err = chunkStore.(chunk.Store2).Scan(context.Background(), tableTime, tableTime, false, callbacks)
 	checkFatal(err)
 
 	level.Info(util.Logger).Log("msg", "finished, shutting down")
@@ -154,6 +152,8 @@ func main() {
 	}
 	// Set back as it was before
 	_, err = setReadCapacity(context.Background(), readClient, tableName, prevReadCapacity)
+	checkFatal(err)
+	_, err = setReadCapacity(context.Background(), readClient, indexTableName, prevIndexReadCapacity)
 	checkFatal(err)
 	if tm != nil {
 		tm.Stop()
@@ -370,11 +370,21 @@ type ReadBatchHashIterator interface {
 func (h *handler) handlePage(page chunk.ReadBatch) {
 	ctx := context.Background()
 	pageCounter.WithLabelValues(h.tableName).Inc()
-	decodeContext := chunk.NewDecodeContext()
 	for i := page.Iterator().(ReadBatchHashIterator); i.Next(); {
+		rangeValue := i.RangeValue()
+		const chunkTimeRangeKeyV3 = '3'
+		if len(rangeValue) < 2 || rangeValue[len(rangeValue)-2] != chunkTimeRangeKeyV3 {
+			continue
+		}
 		hashValue := i.HashValue()
-		org := orgFromHash(hashValue)
-		if org <= 0 {
+		hashParts := strings.SplitN(hashValue, ":", 3)
+		if len(hashParts) != 3 {
+			level.Error(util.Logger).Log("msg", "unrecognized hash value", "hash", hashValue)
+			continue
+		}
+		org, err := strconv.Atoi(hashParts[0])
+		if err != nil {
+			level.Error(util.Logger).Log("msg", "unrecognized org string", "err", err)
 			continue
 		}
 		if h.includeOrgs != nil {
@@ -387,79 +397,81 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		}
 		h.counts[org][""]++
 		if _, found := h.deleteOrgs[org]; found {
-			//request := h.storageClient.NewWriteBatch()
-			//request.AddDelete(h.tableName, hashValue, i.RangeValue())
-			//			h.requests <- request
-		} else if h.writeStore != nil {
-			var ch chunk.Chunk
-			err := ch.Decode(decodeContext, i.Value())
-			if err != nil {
-				level.Error(util.Logger).Log("msg", "chunk decode error", "err", err)
-				continue
-			}
-			metricName := string(ch.Metric.Get(model.MetricNameLabel))
-			h.counts[org][metricName]++
-			if isBogus(metricName) {
-				continue
-			}
-			if fullDedupe {
-				if h.writeStore.DoneThisSeriesBefore(ch) {
-					// relying on series store writing the memcache entry to make this true
-					// so we are doing two reads per write :-(
-					// If we use schema v6 on write then need to do the memcache write ourselves
-					continue
-				}
-				newChunk, err := dedupe(h.readStore, ch)
-				if err != nil {
-					level.Error(util.Logger).Log("msg", "chunk dedupe error", "err", err)
-					continue
-				}
-				ch = *newChunk
-				// TODO: Copy through all chunks that span into next table, for when we stop re-indexing
-			}
-			{
-				if reEncodeChunks {
-					removeBlanks(&ch.Metric)
-					err = ch.Encode()
-					if err != nil {
-						level.Error(util.Logger).Log("msg", "re-encode error", "err", err)
-						continue
-					}
-				}
-				for {
-					err = h.writeStore.Put(ctx, []chunk.Chunk{ch})
-					if err != nil {
-						level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
-						continue
-					}
-					break
-				}
-			}
+			continue
 		}
+
+		from, through, err := decodeDayNumber(hashParts[1])
+		if err != nil {
+			level.Error(util.Logger).Log("msg", "day number error", "err", err)
+			continue
+		}
+
+		seriesID := hashParts[2]
+		if h.writeStore.DoneThisSeriesBefore(from, through, hashParts[0], seriesID) {
+			continue
+		}
+
+		newChunk, err := dedupe(h.readStore, hashParts[0], hashParts[2], from, through)
+		if err != nil {
+			level.Error(util.Logger).Log("msg", "chunk dedupe error", "err", err)
+			continue
+		}
+		metricName := newChunk.Metric.Get(labels.MetricName)
+		h.counts[org][metricName]++
+		if isBogus(metricName) {
+			continue
+		}
+		// TODO: Copy through all chunks that span into next table, for when we stop re-indexing
+		for {
+			err = h.writeStore.Put(ctx, []chunk.Chunk{*newChunk})
+			if err != nil {
+				level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
+				continue
+			}
+			break
+		}
+		// This cache write may duplicate what the store did, but we can't
+		// guarantee it's v9+, and don't know we have the same series IDs as it has
+		h.writeStore.MarkThisSeriesDone(context.TODO(), from, through, hashParts[0], seriesID)
 	}
 }
 
-func dedupe(dstore chunk.Store2, ch chunk.Chunk) (*chunk.Chunk, error) {
+func decodeDayNumber(day string) (model.Time, model.Time, error) {
+	if len(day) < 2 || day[0] != 'd' {
+		return 0, 0, fmt.Errorf("invalid number: %q", day)
+	}
+	dayNumber, err := strconv.Atoi(day[1:])
+	if err != nil {
+		return 0, 0, err
+	}
 	const millisecondsInDay = model.Time(24 * time.Hour / time.Millisecond)
 	// Fetch the whole day that this date is in
-	from := ch.From - (ch.From % millisecondsInDay)
+	from := model.Time(dayNumber) * millisecondsInDay
 	through := from + millisecondsInDay
+	return from, through, nil
+}
+
+func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Time) (*chunk.Chunk, error) {
 	// FIXME: this shouldn't really be necessary, but store query APIs rely on it
-	ctx := user.InjectOrgID(context.Background(), ch.UserID)
-	chunks, err := dstore.AllChunksForSeries(ctx, ch.UserID, ch.Metric, from, through)
+	ctx := user.InjectOrgID(context.Background(), userID)
+	chunks, err := dstore.AllChunksForSeries(ctx, userID, seriesID, from, through)
 	if err != nil {
 		return nil, err
+	}
+	if len(chunks) == 0 {
+		return nil, fmt.Errorf("no chunks found for %s:%s for %v-%v", userID, seriesID, from, through)
 	}
 	data, first, last, err := dataFromChunks(from, through, chunks)
 	if err != nil {
 		return nil, err
 	}
+	//level.Info(util.Logger).Log("msg", "new chunk", "userID", userID, "fp", chunks[0].Fingerprint, "metric", chunks[0].Metric, "first", first, "last", last)
 	ret := &chunk.Chunk{
-		Fingerprint: ch.Fingerprint,
-		UserID:      ch.UserID,
+		Fingerprint: chunks[0].Fingerprint,
+		UserID:      userID,
 		From:        model.Time(first),
 		Through:     model.Time(last),
-		Metric:      ch.Metric,
+		Metric:      chunks[0].Metric,
 		Encoding:    encoding.Bigchunk,
 		Data:        data,
 	}
