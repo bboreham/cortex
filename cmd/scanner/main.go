@@ -38,6 +38,10 @@ var (
 		Name:      "pages_scanned_total",
 		Help:      "Total count of pages scanned from a table",
 	}, []string{"table"})
+	chunksPerUser = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "cortex_chunks_stored_total",
+		Help: "Total stored chunks per user.",
+	}, []string{"user"})
 
 	removeBogusKubeletMetrics bool
 )
@@ -169,6 +173,8 @@ func main() {
 		totals.accumulate(handlers[segment].summary)
 	}
 	totals.print(deleteOrgs)
+
+	time.Sleep(20 * time.Second) // get one more scrape in for final metrics
 }
 
 // wrap the "real" TableManager
@@ -419,6 +425,10 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		metricName := newChunk.Metric.Get(labels.MetricName)
 		h.counts[org][metricName]++
 		if !isBogus(metricName) {
+			// Check again in case another thread completed this one while we were reading
+			if h.writeStore.DoneThisSeriesBefore(from, through, hashParts[0], seriesID) {
+				continue
+			}
 			for {
 				err = h.writeStore.Put(ctx, []chunk.Chunk{*newChunk})
 				if err != nil {
@@ -427,6 +437,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 				}
 				break
 			}
+			chunksPerUser.WithLabelValues(hashParts[0]).Inc()
 		}
 		// This cache write may duplicate what the store did, but we can't
 		// guarantee it's v9+, and don't know we have the same series IDs as it has
