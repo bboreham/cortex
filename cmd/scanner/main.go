@@ -377,20 +377,12 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 	ctx := context.Background()
 	pageCounter.WithLabelValues(h.tableName).Inc()
 	for i := page.Iterator().(ReadBatchHashIterator); i.Next(); {
-		rangeValue := i.RangeValue()
-		const chunkTimeRangeKeyV3 = '3'
-		if len(rangeValue) < 2 || rangeValue[len(rangeValue)-2] != chunkTimeRangeKeyV3 {
+		if !isRecognisedRecord(i.RangeValue()) {
 			continue
 		}
-		hashValue := i.HashValue()
-		hashParts := strings.SplitN(hashValue, ":", 3)
-		if len(hashParts) != 3 {
-			level.Error(util.Logger).Log("msg", "unrecognized hash value", "hash", hashValue)
-			continue
-		}
-		org, err := strconv.Atoi(hashParts[0])
+		org, orgStr, seriesID, from, through, err := decodeHashValue(i.HashValue())
 		if err != nil {
-			level.Error(util.Logger).Log("msg", "unrecognized org string", "err", err)
+			level.Error(util.Logger).Log("msg", "error in hash value", "hash", i.HashValue())
 			continue
 		}
 		if h.includeOrgs != nil {
@@ -405,19 +397,11 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		if _, found := h.deleteOrgs[org]; found {
 			continue
 		}
-
-		from, through, err := decodeDayNumber(hashParts[1])
-		if err != nil {
-			level.Error(util.Logger).Log("msg", "day number error", "err", err)
+		if h.writeStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
 			continue
 		}
 
-		seriesID := hashParts[2]
-		if h.writeStore.DoneThisSeriesBefore(from, through, hashParts[0], seriesID) {
-			continue
-		}
-
-		newChunk, err := dedupe(h.readStore, hashParts[0], hashParts[2], from, through)
+		newChunk, err := dedupe(h.readStore, orgStr, seriesID, from, through)
 		if err != nil {
 			level.Error(util.Logger).Log("msg", "chunk dedupe error", "err", err)
 			continue
@@ -426,7 +410,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		h.counts[org][metricName]++
 		if !isBogus(metricName) {
 			// Check again in case another thread completed this one while we were reading
-			if h.writeStore.DoneThisSeriesBefore(from, through, hashParts[0], seriesID) {
+			if h.writeStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
 				continue
 			}
 			for {
@@ -437,13 +421,35 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 				}
 				break
 			}
-			chunksPerUser.WithLabelValues(hashParts[0]).Inc()
+			chunksPerUser.WithLabelValues(orgStr).Inc()
 		}
 		// This cache write may duplicate what the store did, but we can't
 		// guarantee it's v9+, and don't know we have the same series IDs as it has
-		h.writeStore.MarkThisSeriesDone(context.TODO(), from, through, hashParts[0], seriesID)
+		h.writeStore.MarkThisSeriesDone(context.TODO(), from, through, orgStr, seriesID)
 	}
 	// TODO: Copy through all chunks that span into next table, for when we stop re-indexing
+}
+
+func isRecognisedRecord(rangeValue []byte) bool {
+	const chunkTimeRangeKeyV3 = '3'
+	return len(rangeValue) > 2 && rangeValue[len(rangeValue)-2] == chunkTimeRangeKeyV3
+}
+
+func decodeHashValue(hashValue string) (org int, orgStr, seriesID string, from, through model.Time, err error) {
+	hashParts := strings.SplitN(hashValue, ":", 3)
+	if len(hashParts) != 3 {
+		err = fmt.Errorf("unrecognized hash value: %q", hashValue)
+		return
+	}
+	orgStr = hashParts[0]
+	seriesID = hashParts[2]
+	org, err = strconv.Atoi(orgStr)
+	if err != nil {
+		err = fmt.Errorf("unrecognized org string: %s", err)
+		return
+	}
+	from, through, err = decodeDayNumber(hashParts[1])
+	return
 }
 
 func decodeDayNumber(day string) (model.Time, model.Time, error) {
