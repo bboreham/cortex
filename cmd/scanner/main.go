@@ -413,14 +413,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			if h.writeStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
 				continue
 			}
-			for {
-				err = h.writeStore.Put(ctx, []chunk.Chunk{*newChunk})
-				if err != nil {
-					level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
-					continue
-				}
-				break
-			}
+			h.putWithRetry(ctx, newChunk)
 			chunksPerUser.WithLabelValues(orgStr).Inc()
 		}
 		// This cache write may duplicate what the store did, but we can't
@@ -428,6 +421,17 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		h.writeStore.MarkThisSeriesDone(context.TODO(), from, through, orgStr, seriesID)
 	}
 	// TODO: Copy through all chunks that span into next table, for when we stop re-indexing
+}
+
+func (h *handler) putWithRetry(ctx context.Context, newChunk *chunk.Chunk) {
+	for {
+		err := h.writeStore.Put(ctx, []chunk.Chunk{*newChunk})
+		if err != nil {
+			level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
+			continue
+		}
+		break
+	}
 }
 
 func isRecognisedRecord(rangeValue []byte) bool {
