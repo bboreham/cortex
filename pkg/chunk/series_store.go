@@ -460,12 +460,12 @@ func (c *seriesStore) PutOne(ctx context.Context, from, through model.Time, chun
 		return err
 	}
 
-	if oic, ok := c.storage.(ObjectAndIndexClient); ok {
+	if oic, ok := c.chunks.(ObjectAndIndexClient); ok {
 		if err = oic.PutChunkAndIndex(ctx, chunk, writeReqs); err != nil {
 			return err
 		}
 	} else {
-		err := c.storage.PutChunks(ctx, chunks)
+		err := c.chunks.PutChunks(ctx, chunks)
 		if err != nil {
 			return err
 		}

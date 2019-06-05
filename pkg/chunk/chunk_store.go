@@ -130,7 +130,7 @@ func newStore(cfg StoreConfig, schema StoreSchema, index IndexClient, chunks Cli
 
 // Stop any background goroutines (ie in the cache.)
 func (c *store) Stop() {
-	c.storage.Stop()
+	c.chunks.Stop()
 	c.Fetcher.Stop()
 	c.index.Stop()
 }
@@ -150,7 +150,7 @@ func (c *store) PutOne(ctx context.Context, from, through model.Time, chunk Chun
 	log, ctx := spanlogger.New(ctx, "ChunkStore.PutOne")
 	chunks := []Chunk{chunk}
 
-	err := c.storage.PutChunks(ctx, chunks)
+	err := c.chunks.PutChunks(ctx, chunks)
 	if err != nil {
 		return err
 	}
@@ -217,7 +217,11 @@ func (c *store) GetChunkRefs(ctx context.Context, userID string, from, through m
 }
 
 func (c *store) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error {
-	return c.storage.(ObjectClient2).Scan(ctx, from, through, withValue, callbacks)
+	return c.chunks.(ObjectClient2).Scan(ctx, from, through, withValue, callbacks)
+}
+
+func (c *store) PutNoIndex(ctx context.Context, chunk Chunk) error {
+	return c.chunks.PutChunks(ctx, []Chunk{chunk})
 }
 
 // LabelValuesForMetricName retrieves all label values for a single label name and metric name.
