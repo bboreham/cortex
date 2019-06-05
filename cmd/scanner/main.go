@@ -44,6 +44,8 @@ var (
 	}, []string{"user"})
 
 	removeBogusKubeletMetrics bool
+	copyChunksForNextWeek     bool
+	endOfWeek                 model.Time
 )
 
 func main() {
@@ -79,6 +81,7 @@ func main() {
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&rechunkSchemaFile, "rechunk-yaml", "", "Yaml definition of new chunk tables (blank to disable)")
 	flag.BoolVar(&removeBogusKubeletMetrics, "remove-bogus-kubelet", false, "Remove bogus Kubelete metrics from the output")
+	flag.BoolVar(&copyChunksForNextWeek, "copy-next-week", false, "Copy in chunks that span into next week")
 
 	flag.Parse()
 
@@ -99,6 +102,7 @@ func main() {
 		week = time.Now().Unix() / secondsInWeek
 	}
 	tableTime := model.TimeFromUnix(week * secondsInWeek)
+	endOfWeek = tableTime.Add(7 * 24 * time.Hour)
 
 	err := schemaConfig.Load()
 	checkFatal(err)
@@ -401,7 +405,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			continue
 		}
 
-		newChunk, err := dedupe(h.readStore, orgStr, seriesID, from, through)
+		newChunk, extras, err := dedupe(h.readStore, orgStr, seriesID, from, through)
 		if err != nil {
 			level.Error(util.Logger).Log("msg", "chunk dedupe error", "err", err)
 			continue
@@ -415,17 +419,32 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			}
 			h.putWithRetry(ctx, newChunk)
 			chunksPerUser.WithLabelValues(orgStr).Inc()
+
+			// Copy through all chunks that span into next table, for when we stop re-indexing
+			for _, c := range extras {
+				h.putNoIndexWithRetry(ctx, c)
+			}
 		}
 		// This cache write may duplicate what the store did, but we can't
 		// guarantee it's v9+, and don't know we have the same series IDs as it has
 		h.writeStore.MarkThisSeriesDone(context.TODO(), from, through, orgStr, seriesID)
 	}
-	// TODO: Copy through all chunks that span into next table, for when we stop re-indexing
 }
 
 func (h *handler) putWithRetry(ctx context.Context, newChunk *chunk.Chunk) {
 	for {
 		err := h.writeStore.Put(ctx, []chunk.Chunk{*newChunk})
+		if err != nil {
+			level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
+			continue
+		}
+		break
+	}
+}
+
+func (h *handler) putNoIndexWithRetry(ctx context.Context, chunk chunk.Chunk) {
+	for {
+		err := h.writeStore.PutNoIndex(ctx, chunk)
 		if err != nil {
 			level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
 			continue
@@ -471,19 +490,19 @@ func decodeDayNumber(day string) (model.Time, model.Time, error) {
 	return from, through, nil
 }
 
-func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Time) (*chunk.Chunk, error) {
+func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Time) (*chunk.Chunk, []chunk.Chunk, error) {
 	// FIXME: this shouldn't really be necessary, but store query APIs rely on it
 	ctx := user.InjectOrgID(context.Background(), userID)
 	chunks, err := dstore.AllChunksForSeries(ctx, userID, seriesID, from, through)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(chunks) == 0 {
-		return nil, fmt.Errorf("no chunks found for %s:%s for %v-%v", userID, seriesID, from, through)
+		return nil, nil, fmt.Errorf("no chunks found for %s:%s for %v-%v", userID, seriesID, from, through)
 	}
 	data, first, last, err := dataFromChunks(from, through, chunks)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	//level.Info(util.Logger).Log("msg", "new chunk", "userID", userID, "fp", chunks[0].Fingerprint, "metric", chunks[0].Metric, "first", first, "last", last)
 	ret := &chunk.Chunk{
@@ -497,9 +516,17 @@ func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Ti
 	}
 	err = ret.Encode()
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
-	return ret, nil
+	var extras []chunk.Chunk
+	if copyChunksForNextWeek {
+		for _, c := range chunks {
+			if c.Through > endOfWeek {
+				extras = append(extras, c)
+			}
+		}
+	}
+	return ret, extras, nil
 }
 
 // unpack and dedupe all samples from previous chunks; create one new chunk.
