@@ -60,12 +60,16 @@ func main() {
 		loglevel  string
 		address   string
 
+		chunkReadCapacity int64
+		indexReadCapacity int64
 		rechunkSchemaFile string
 	)
 
 	flagext.RegisterFlags(&storageConfig, &schemaConfig, &chunkStoreConfig, &encodingConfig, &tbmConfig)
 	flag.StringVar(&address, "address", ":6060", "Address to listen on, for profiling, etc.")
 	flag.Int64Var(&week, "week", 0, "Week number to scan, e.g. 2497 (0 means current week)")
+	flag.Int64Var(&chunkReadCapacity, "chunk-read-provision", 1000, "DynamoDB read provision for chunk table")
+	flag.Int64Var(&indexReadCapacity, "index-read-provision", 1000, "DynamoDB read provision for chunk table")
 	flag.IntVar(&segments, "segments", 1, "Number of segments to read in parallel")
 	flag.StringVar(&deleteOrgsFile, "delete-orgs-file", "", "File containing IDs of orgs to delete")
 	flag.StringVar(&includeOrgsStr, "include-orgs", "", "IDs of orgs to include (space-separated)")
@@ -122,7 +126,7 @@ func main() {
 
 	readClient, err := storage.NewTableClient("aws", storageConfig)
 	checkFatal(err)
-	prevReadCapacity, err := setReadCapacity(context.Background(), readClient, tableName, 2000)
+	prevReadCapacity, err := setReadCapacity(context.Background(), readClient, tableName, chunkReadCapacity)
 	checkFatal(err)
 
 	if tm != nil {
