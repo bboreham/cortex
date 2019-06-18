@@ -111,15 +111,15 @@ func main() {
 		util.CheckFatal("initializing table client", err)
 
 		// We want our table-manager to manage just a two-week period
-		rechunkConfig.Configs[0].From = tableTime
+		rechunkConfig.Configs[0].From.Time = tableTime
 		rechunkConfig.Configs = append(rechunkConfig.Configs,
 			chunk.PeriodConfig{
-				From:       tableTime + oneWeek*2,
+				From:       chunk.DayTime{Time: tableTime + oneWeek*2},
 				IndexType:  "inmemory",
 				ObjectType: "inmemory",
 			})
 
-		tableManager, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient)
+		tableManager, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient, nil)
 		util.CheckFatal("initializing table manager", err)
 		tableManager.Start()
 		defer tableManager.Stop()
@@ -271,7 +271,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 				level.Error(util.Logger).Log("msg", "chunk decode error", "err", err)
 				continue
 			}
-			h.counts[org][string(ch.Metric[model.MetricNameLabel])]++
+			h.counts[org][string(ch.Metric.Get(model.MetricNameLabel))]++
 			{
 				if reEncodeChunks {
 					err = ch.Encode()
