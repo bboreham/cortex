@@ -38,6 +38,7 @@ var (
 	}, []string{"table"})
 
 	reEncodeChunks bool
+	reIndexOnly    bool
 
 	removeBogusKubeletMetrics bool
 )
@@ -76,6 +77,7 @@ func main() {
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&rechunkSchemaFile, "rechunk-yaml", "", "Yaml definition of new chunk tables (blank to disable)")
 	flag.BoolVar(&reEncodeChunks, "re-encode-chunks", false, "Enable re-encoding of chunks to save on storing zeros")
+	flag.BoolVar(&reIndexOnly, "re-index-only", false, "Only reindex; do not copy chunks")
 	flag.BoolVar(&removeBogusKubeletMetrics, "remove-bogus-kubelet", false, "Remove bogus Kubelete metrics from the output")
 
 	flag.Parse()
@@ -405,7 +407,11 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 					}
 				}
 				for {
-					err = h.store.Put(ctx, []chunk.Chunk{ch})
+					if reIndexOnly {
+						err = h.store.ReIndex(ctx, ch)
+					} else {
+						err = h.store.Put(ctx, []chunk.Chunk{ch})
+					}
 					if err != nil {
 						level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
 						continue

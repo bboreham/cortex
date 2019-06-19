@@ -20,6 +20,7 @@ type Store interface {
 	GetChunkRefs(ctx context.Context, from, through model.Time, matchers ...*labels.Matcher) ([][]Chunk, []*Fetcher, error)
 	LabelValuesForMetricName(ctx context.Context, from, through model.Time, metricName string, labelName string) ([]string, error)
 	Stop()
+	ReIndex(ctx context.Context, chunks Chunk) error
 }
 
 // Store2 because naming is hard
@@ -82,6 +83,12 @@ func (c compositeStore) Put(ctx context.Context, chunks []Chunk) error {
 func (c compositeStore) PutOne(ctx context.Context, from, through model.Time, chunk Chunk) error {
 	return c.forStores(from, through, func(from, through model.Time, store Store) error {
 		return store.PutOne(ctx, from, through, chunk)
+	})
+}
+
+func (c compositeStore) ReIndex(ctx context.Context, chunk Chunk) error {
+	return c.forStores(chunk.From, chunk.Through, func(from, through model.Time, store Store) error {
+		return store.ReIndex(ctx, chunk)
 	})
 }
 

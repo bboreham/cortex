@@ -368,6 +368,20 @@ func (c *seriesStore) PutOne(ctx context.Context, from, through model.Time, chun
 	return nil
 }
 
+// ReIndex implements ChunkStore
+func (c *seriesStore) ReIndex(ctx context.Context, chunk Chunk) error {
+	writeReqs, keysToCache, err := c.calculateIndexEntries(chunk.From, chunk.Through, chunk)
+	if err != nil {
+		return err
+	}
+	if err := c.index.BatchWrite(ctx, writeReqs); err != nil {
+		return err
+	}
+	bufs := make([][]byte, len(keysToCache))
+	c.writeDedupeCache.Store(ctx, keysToCache, bufs)
+	return nil
+}
+
 // calculateIndexEntries creates a set of batched WriteRequests for all the chunks it is given.
 func (c *seriesStore) calculateIndexEntries(from, through model.Time, chunk Chunk) (WriteBatch, []string, error) {
 	seenIndexEntries := map[string]struct{}{}

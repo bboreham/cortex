@@ -142,6 +142,16 @@ func (c *store) PutOne(ctx context.Context, from, through model.Time, chunk Chun
 	return c.index.BatchWrite(ctx, writeReqs)
 }
 
+// ReIndex implements ChunkStore
+func (c *store) ReIndex(ctx context.Context, chunk Chunk) error {
+	writeReqs, err := c.calculateIndexEntries(chunk.UserID, chunk.From, chunk.Through, chunk)
+	if err != nil {
+		return err
+	}
+
+	return c.index.BatchWrite(ctx, writeReqs)
+}
+
 // calculateIndexEntries creates a set of batched WriteRequests for all the chunks it is given.
 func (c *store) calculateIndexEntries(userID string, from, through model.Time, chunk Chunk) (WriteBatch, error) {
 	seenIndexEntries := map[string]struct{}{}
