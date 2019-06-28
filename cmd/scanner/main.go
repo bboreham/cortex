@@ -336,11 +336,7 @@ func (s summary) print(deleteOrgs map[int]struct{}) {
 			deleted = "deleted"
 		}
 		for metric, c := range m {
-			bogus := ""
-			if isBogus(metric) {
-				bogus = "bogus"
-			}
-			fmt.Printf("%d, %s, %d, %s%s\n", instance, metric, c, deleted, bogus)
+			fmt.Printf("%d, %s, %d, %s\n", instance, metric, c, deleted)
 		}
 	}
 }
@@ -411,19 +407,22 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			continue
 		}
 		metricName := newChunk.Metric.Get(labels.MetricName)
-		h.counts[org][metricName]++
-		if !isBogus(metricName) {
+		if !isBogus(newChunk.Metric) {
 			// Check again in case another thread completed this one while we were reading
 			if h.writeStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
 				continue
 			}
 			h.putWithRetry(ctx, newChunk)
 			chunksPerUser.WithLabelValues(orgStr).Inc()
+			h.counts[org][metricName]++
 
 			// Copy through all chunks that span into next table, for when we stop re-indexing
 			for _, c := range extras {
 				h.putNoIndexWithRetry(ctx, c)
+				h.counts[org][metricName]++
 			}
+		} else {
+			h.counts[org][metricName+"-bogus"]++
 		}
 		// This cache write may duplicate what the store did, but we can't
 		// guarantee it's v9+, and don't know we have the same series IDs as it has
@@ -555,13 +554,24 @@ func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encodin
 	return
 }
 
-func isBogus(metricName string) bool {
-	if removeBogusKubeletMetrics &&
-		(metricName == "container_network_tcp_usage_total" ||
+func isBogus(lbls labels.Labels) bool {
+	if !removeBogusKubeletMetrics {
+		return false
+	}
+	metricName := lbls.Get(labels.MetricName)
+	if strings.HasPrefix(metricName, "container_") {
+		// Drop metrics which are disabled but still sent as all zeros by kubelet
+		if metricName == "container_network_tcp_usage_total" ||
 			metricName == "container_network_udp_usage_total" ||
 			metricName == "container_tasks_state" ||
-			metricName == "container_cpu_load_average_10s") {
-		return true
+			metricName == "container_cpu_load_average_10s" {
+			return true
+		}
+		// Drop all cAdvisor metrics for leaked systemd tasks
+		id := lbls.Get("id")
+		if strings.HasPrefix(id, "/system.slice/run-") && strings.HasSuffix(id, "scope") {
+			return true
+		}
 	}
 	return false
 }
