@@ -573,6 +573,9 @@ func isBogus(lbls labels.Labels) bool {
 			return true
 		}
 	}
+	if metricName == "kube_configmap_metadata_resource_version" {
+		return true
+	}
 	return false
 }
 
