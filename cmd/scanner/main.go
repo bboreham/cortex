@@ -45,6 +45,7 @@ var (
 
 	removeBogusKubeletMetrics bool
 	copyChunksForNextWeek     bool
+	minChunkLength            int
 	endOfWeek                 model.Time
 )
 
@@ -81,6 +82,7 @@ func main() {
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
 	flag.StringVar(&rechunkSchemaFile, "rechunk-yaml", "", "Yaml definition of new chunk tables (blank to disable)")
 	flag.BoolVar(&removeBogusKubeletMetrics, "remove-bogus-kubelet", false, "Remove bogus Kubelete metrics from the output")
+	flag.IntVar(&minChunkLength, "min-chunk-length", 0, "Drop chunks smaller than this size")
 	flag.BoolVar(&copyChunksForNextWeek, "copy-next-week", false, "Copy in chunks that span into next week")
 
 	flag.Parse()
@@ -407,7 +409,12 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			continue
 		}
 		metricName := newChunk.Metric.Get(labels.MetricName)
-		if !isBogus(newChunk.Metric) {
+		switch {
+		case isBogus(newChunk.Metric):
+			h.counts[org][metricName+"-bogus"]++
+		case newChunk.Data.Len() < minChunkLength:
+			h.counts[org][metricName+"-bogus-tiny"]++
+		default:
 			// Check again in case another thread completed this one while we were reading
 			if h.writeStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
 				continue
@@ -421,8 +428,6 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 				h.putNoIndexWithRetry(ctx, c)
 				h.counts[org][metricName]++
 			}
-		} else {
-			h.counts[org][metricName+"-bogus"]++
 		}
 		// This cache write may duplicate what the store did, but we can't
 		// guarantee it's v9+, and don't know we have the same series IDs as it has
