@@ -57,6 +57,7 @@ func main() {
 		chunkStoreConfig chunk.StoreConfig
 		encodingConfig   encoding.Config
 		tbmConfig        chunk.TableManagerConfig
+		limitsConfig     validation.Limits
 
 		deleteOrgsFile string
 		includeOrgsStr string
@@ -71,7 +72,7 @@ func main() {
 		rechunkSchemaFile string
 	)
 
-	flagext.RegisterFlags(&storageConfig, &schemaConfig, &chunkStoreConfig, &encodingConfig, &tbmConfig)
+	flagext.RegisterFlags(&storageConfig, &schemaConfig, &chunkStoreConfig, &encodingConfig, &tbmConfig, &limitsConfig)
 	flag.StringVar(&address, "address", ":6060", "Address to listen on, for profiling, etc.")
 	flag.Int64Var(&week, "week", 0, "Week number to scan, e.g. 2497 (0 means current week)")
 	flag.Int64Var(&chunkReadCapacity, "chunk-read-provision", 1000, "DynamoDB read provision for chunk table")
@@ -109,7 +110,8 @@ func main() {
 	err := schemaConfig.Load()
 	checkFatal(err)
 
-	overrides := &validation.Overrides{}
+	overrides, err := validation.NewOverrides(limitsConfig)
+	checkFatal(err)
 	chunkStore, err := storage.NewStore(storageConfig, chunkStoreConfig, schemaConfig, overrides)
 	checkFatal(err)
 	defer chunkStore.Stop()
