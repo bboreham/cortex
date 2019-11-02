@@ -492,7 +492,8 @@ func decodeDayNumber(day string) (model.Time, model.Time, error) {
 	const millisecondsInDay = model.Time(24 * time.Hour / time.Millisecond)
 	// Fetch the whole day that this date is in
 	from := model.Time(dayNumber) * millisecondsInDay
-	through := from + millisecondsInDay
+	// Time intervals are inclusive, so step back one millisecond from the next day
+	through := from + millisecondsInDay - 1
 	return from, through, nil
 }
 
@@ -549,7 +550,7 @@ func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encodin
 	first, _ = iter.At()
 	for {
 		ts, v := iter.At()
-		if ts >= int64(through) {
+		if ts > int64(through) {
 			break
 		}
 		last = ts
