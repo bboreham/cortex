@@ -412,7 +412,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		}
 		metricName := newChunk.Metric.Get(labels.MetricName)
 		switch {
-		case isBogus(newChunk.Metric):
+		case isBogus(org, newChunk.Metric):
 			h.counts[org][metricName+"-bogus"]++
 		case newChunk.Data.Len() < minChunkLength:
 			h.counts[org][metricName+"-bogus-tiny"]++
@@ -562,11 +562,18 @@ func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encodin
 	return
 }
 
-func isBogus(lbls labels.Labels) bool {
+func isBogus(org int, lbls labels.Labels) bool {
 	if !removeBogusKubeletMetrics {
 		return false
 	}
 	metricName := lbls.Get(labels.MetricName)
+	if org == 13040 || org == 13049 || org == 13124 {
+		if strings.HasPrefix(metricName, "kafka_streams_stream_processor_node_metrics_") ||
+			strings.HasPrefix(metricName, "kafka_consumer_consumer_node_metrics_") ||
+			strings.HasPrefix(metricName, "kafka_producer_producer_node_metrics_") {
+			return true
+		}
+	}
 	if strings.HasPrefix(metricName, "container_") {
 		// Drop metrics which are disabled but still sent as all zeros by kubelet
 		if metricName == "container_network_tcp_usage_total" ||
