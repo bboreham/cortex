@@ -54,11 +54,12 @@ func main() {
 	c, err := kubernetes.NewForConfig(config)
 	util.CheckFatal("Could not make Kubernetes connection", err)
 
-	jobTemplate, err := ioutil.ReadFile(jobFile)
-	util.CheckFatal("reading file", err)
-
 	// For each week, create a Job then watch it until it finishes
 	for weeknum := fromWeek; weeknum <= toWeek; weeknum++ {
+		// re-read template in case it was edited
+		jobTemplate, err := ioutil.ReadFile(jobFile)
+		util.CheckFatal("reading file", err)
+
 		level.Info(util.Logger).Log("msg", "starting week", "week", weeknum)
 
 		templated := bytes.Replace(jobTemplate, []byte("{{week}}"), []byte(fmt.Sprint(weeknum)), -1)
