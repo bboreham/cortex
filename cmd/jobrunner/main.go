@@ -83,9 +83,10 @@ func main() {
 				deleteOptions := &metav1.DeleteOptions{
 					PropagationPolicy: &policy,
 				}
-				time.Sleep(30 * time.Second)
+				time.Sleep(10 * time.Second)
 				err := c.BatchV1().Jobs(jobSpec.Namespace).Delete(job.Name, deleteOptions)
 				util.CheckFatal("deleting job", err)
+				time.Sleep(20 * time.Second) // TODO: check deletion has finished
 				break
 			} else if job.Status.Failed > 0 {
 				level.Error(util.Logger).Log("msg", "failed", "job", job.Name)
