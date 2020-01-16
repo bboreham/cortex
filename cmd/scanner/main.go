@@ -47,6 +47,8 @@ var (
 	copyChunksForNextWeek     bool
 	minChunkLength            int
 	endOfWeek                 model.Time
+	hourLimitStart            int
+	hourLimitEnd              int
 )
 
 func main() {
@@ -85,6 +87,8 @@ func main() {
 	flag.BoolVar(&removeBogusKubeletMetrics, "remove-bogus-kubelet", false, "Remove bogus Kubelete metrics from the output")
 	flag.IntVar(&minChunkLength, "min-chunk-length", 0, "Drop chunks smaller than this size")
 	flag.BoolVar(&copyChunksForNextWeek, "copy-next-week", false, "Copy in chunks that span into next week")
+	flag.IntVar(&hourLimitStart, "active-hours-start", 0, "Hour number [0-23] when we can start running")
+	flag.IntVar(&hourLimitEnd, "active-hours-end", 0, "Hour number [0-23] when we must stop running")
 
 	flag.Parse()
 
@@ -379,6 +383,17 @@ type ReadBatchHashIterator interface {
 
 func (h *handler) handlePage(page chunk.ReadBatch) {
 	ctx := context.Background()
+
+	if hourLimitStart != 0 && hourLimitEnd != 0 {
+		for {
+			hourNow := time.Now().Hour()
+			if hourNow >= hourLimitStart && hourNow <= hourLimitEnd {
+				break
+			}
+			time.Sleep(time.Minute)
+		}
+	}
+
 	pageCounter.WithLabelValues(h.tableName).Inc()
 	for i := page.Iterator().(ReadBatchHashIterator); i.Next(); {
 		if !isRecognisedRecord(i.RangeValue()) {
