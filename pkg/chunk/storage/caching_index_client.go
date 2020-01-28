@@ -9,6 +9,7 @@ import (
 	proto "github.com/golang/protobuf/proto"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
+	"github.com/prometheus/common/model"
 	"github.com/weaveworks/common/user"
 
 	"github.com/cortexproject/cortex/pkg/chunk"
@@ -302,4 +303,8 @@ func (s *cachingIndexClient) cacheFetch(ctx context.Context, keys []string) (bat
 
 	level.Debug(log).Log("hits", len(batches), "misses", len(misses))
 	return batches, missed
+}
+
+func (s *cachingIndexClient) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error {
+	return s.IndexClient.(chunk.IndexClient2).Scan(ctx, from, through, withValue, callbacks)
 }

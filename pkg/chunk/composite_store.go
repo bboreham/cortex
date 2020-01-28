@@ -36,6 +36,7 @@ type Store2 interface {
 	DoneThisSeriesBefore(from, through model.Time, userID, seriesID string) bool
 	MarkThisSeriesDone(ctx context.Context, from, through model.Time, userID, seriesID string)
 	AllChunksForSeries(ctx context.Context, userID, seriesID string, from, through model.Time) ([]Chunk, error)
+	IndexClient(ts model.Time) (IndexClient, error)
 }
 
 // CompositeStore is a Store which delegates to various stores depending
@@ -99,6 +100,16 @@ func (c compositeStore) Scan(ctx context.Context, from, through model.Time, with
 	return c.forStores(from, through, func(from, through model.Time, store Store) error {
 		return store.(Store2).Scan(ctx, from, through, withValue, callbacks)
 	})
+}
+
+func (c compositeStore) IndexClient(ts model.Time) (IndexClient, error) {
+	var ret IndexClient
+	err := c.forStores(ts, ts, func(from, through model.Time, store Store) error {
+		var err error
+		ret, err = store.(Store2).IndexClient(from)
+		return err
+	})
+	return ret, err
 }
 
 func (c compositeStore) PutNoIndex(ctx context.Context, chunk Chunk) error {

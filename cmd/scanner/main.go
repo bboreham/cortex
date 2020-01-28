@@ -19,6 +19,7 @@ import (
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/pkg/labels"
 
+	goKitLog "github.com/go-kit/kit/log"
 	"github.com/go-kit/kit/log/level"
 	"github.com/weaveworks/common/logging"
 	"github.com/weaveworks/common/user"
@@ -46,6 +47,7 @@ var (
 	removeBogusKubeletMetrics bool
 	copyChunksForNextWeek     bool
 	minChunkLength            int
+	tableTime                 model.Time
 	endOfWeek                 model.Time
 	hourLimitStart            int
 	hourLimitEnd              int
@@ -108,7 +110,7 @@ func main() {
 	if week == 0 {
 		week = time.Now().Unix() / secondsInWeek
 	}
-	tableTime := model.TimeFromUnix(week * secondsInWeek)
+	tableTime = model.TimeFromUnix(week * secondsInWeek)
 	endOfWeek = tableTime.Add(7 * 24 * time.Hour)
 
 	err := schemaConfig.Load()
@@ -136,14 +138,19 @@ func main() {
 
 	tableName, err := schemaConfig.ChunkTableFor(tableTime)
 	checkFatal(err)
-	fmt.Printf("table %s\n", tableName)
 	indexTableName, err := schemaConfig.IndexTableFor(tableTime)
 	checkFatal(err)
+	writeTableName, err := rechunkConfig.IndexTableFor(tableTime)
+	checkFatal(err)
+	fmt.Printf("chunk table %s, index table %s, writing to %s\n", tableName, indexTableName, writeTableName)
 
 	readClient, err := storage.NewTableClient("aws", storageConfig)
 	checkFatal(err)
-	prevReadCapacity, err := setReadCapacity(context.Background(), readClient, tableName, chunkReadCapacity)
-	checkFatal(err)
+	var prevReadCapacity int64
+	if tableName != "" {
+		prevReadCapacity, err = setReadCapacity(context.Background(), readClient, tableName, chunkReadCapacity)
+		checkFatal(err)
+	}
 	prevIndexReadCapacity, err := setReadCapacity(context.Background(), readClient, indexTableName, indexReadCapacity)
 	checkFatal(err)
 
@@ -155,7 +162,7 @@ func main() {
 	callbacks := make([]func(result chunk.ReadBatch), segments)
 	for segment := 0; segment < segments; segment++ {
 		// This only works for series-store, i.e. schema v9 and v10
-		handlers[segment] = newHandler(chunkStore.(chunk.Store2), reindexStore.(chunk.Store2), indexTableName, includeOrgs, deleteOrgs)
+		handlers[segment] = newHandler(chunkStore.(chunk.Store2), reindexStore.(chunk.Store2), indexTableName, writeTableName, includeOrgs, deleteOrgs)
 		callbacks[segment] = handlers[segment].handlePage
 	}
 
@@ -167,7 +174,9 @@ func main() {
 		reindexStore.Stop()
 	}
 	// Set back as it was before
-	_, err = setReadCapacity(context.Background(), readClient, tableName, prevReadCapacity)
+	if tableName != "" {
+		_, err = setReadCapacity(context.Background(), readClient, tableName, prevReadCapacity)
+	}
 	checkFatal(err)
 	_, err = setReadCapacity(context.Background(), readClient, indexTableName, prevIndexReadCapacity)
 	checkFatal(err)
@@ -353,13 +362,14 @@ type handler struct {
 	readStore   chunk.Store2
 	writeStore  chunk.Store2
 	tableName   string
+	wTableName  string
 	pages       int
 	includeOrgs map[int]struct{}
 	deleteOrgs  map[int]struct{}
 	summary
 }
 
-func newHandler(readStore, writeStore chunk.Store2, tableName string, includeOrgs map[int]struct{}, deleteOrgs map[int]struct{}) handler {
+func newHandler(readStore, writeStore chunk.Store2, tableName, writeTableName string, includeOrgs map[int]struct{}, deleteOrgs map[int]struct{}) handler {
 	if len(includeOrgs) == 0 {
 		includeOrgs = nil
 	}
@@ -367,6 +377,7 @@ func newHandler(readStore, writeStore chunk.Store2, tableName string, includeOrg
 		readStore:   readStore,
 		writeStore:  writeStore,
 		tableName:   tableName,
+		wTableName:  writeTableName,
 		includeOrgs: includeOrgs,
 		deleteOrgs:  deleteOrgs,
 		summary:     newSummary(),
@@ -395,11 +406,13 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 	}
 
 	pageCounter.WithLabelValues(h.tableName).Inc()
+
+	indexClient, err := h.writeStore.IndexClient(tableTime)
+	checkFatal(err)
+	writeBatch, writeBatchSize := indexClient.NewWriteBatch(), 0
+
 	for i := page.Iterator().(ReadBatchHashIterator); i.Next(); {
-		if !isRecognisedRecord(i.RangeValue()) {
-			continue
-		}
-		org, orgStr, seriesID, from, through, err := decodeHashValue(i.HashValue())
+		org, err := decodeHashValue(i.HashValue())
 		if err != nil {
 			level.Error(util.Logger).Log("msg", "error in hash value", "hash", i.HashValue())
 			continue
@@ -416,39 +429,21 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		if _, found := h.deleteOrgs[org]; found {
 			continue
 		}
-		if h.writeStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
-			continue
+		writeBatch.Add(h.wTableName, i.HashValue(), i.RangeValue(), nil)
+		writeBatchSize++
+		if writeBatchSize > 24 {
+			err = indexClient.BatchWrite(ctx, writeBatch)
+			if err != nil {
+				level.Error(util.Logger).Log("msg", "error writing batch", "err", err.Error())
+			}
+			writeBatch, writeBatchSize = indexClient.NewWriteBatch(), 0
 		}
-
-		newChunk, extras, err := dedupe(h.readStore, orgStr, seriesID, from, through)
+	}
+	if writeBatchSize > 0 {
+		err := indexClient.BatchWrite(ctx, writeBatch)
 		if err != nil {
-			level.Error(util.Logger).Log("msg", "chunk dedupe error", "err", err)
-			continue
+			level.Error(util.Logger).Log("msg", "error writing batch", "err", err.Error())
 		}
-		metricName := newChunk.Metric.Get(labels.MetricName)
-		switch {
-		case isBogus(org, newChunk.Metric):
-			h.counts[org][metricName+"-bogus"]++
-		case newChunk.Data.Len() < minChunkLength:
-			h.counts[org][metricName+"-bogus-tiny"]++
-		default:
-			// Check again in case another thread completed this one while we were reading
-			if h.writeStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
-				continue
-			}
-			h.putWithRetry(ctx, newChunk)
-			chunksPerUser.WithLabelValues(orgStr).Inc()
-			h.counts[org][metricName]++
-
-			// Copy through all chunks that span into next table, for when we stop re-indexing
-			for _, c := range extras {
-				h.putNoIndexWithRetry(ctx, c)
-				h.counts[org][metricName]++
-			}
-		}
-		// This cache write may duplicate what the store did, but we can't
-		// guarantee it's v9+, and don't know we have the same series IDs as it has
-		h.writeStore.MarkThisSeriesDone(context.TODO(), from, through, orgStr, seriesID)
 	}
 }
 
@@ -479,20 +474,18 @@ func isRecognisedRecord(rangeValue []byte) bool {
 	return len(rangeValue) > 2 && rangeValue[len(rangeValue)-2] == chunkTimeRangeKeyV3
 }
 
-func decodeHashValue(hashValue string) (org int, orgStr, seriesID string, from, through model.Time, err error) {
+func decodeHashValue(hashValue string) (org int, err error) {
 	hashParts := strings.SplitN(hashValue, ":", 3)
 	if len(hashParts) != 3 {
 		err = fmt.Errorf("unrecognized hash value: %q", hashValue)
 		return
 	}
-	orgStr = hashParts[0]
-	seriesID = hashParts[2]
+	orgStr := hashParts[0]
 	org, err = strconv.Atoi(orgStr)
 	if err != nil {
 		err = fmt.Errorf("unrecognized org string: %s", err)
 		return
 	}
-	from, through, err = decodeDayNumber(hashParts[1])
 	return
 }
 
@@ -640,7 +633,8 @@ func orgFromHash(hashStr string) int {
 
 func checkFatal(err error) {
 	if err != nil {
-		level.Error(util.Logger).Log("msg", "fatal error", "err", err)
+		caller := goKitLog.Caller(2)()
+		level.Error(util.Logger).Log("msg", "fatal error", "caller", caller, "err", err)
 		fmt.Fprintf(os.Stderr, "%+v", err)
 		os.Exit(1)
 	}

@@ -2,7 +2,6 @@ package chunk
 
 import (
 	"context"
-	"errors"
 	"flag"
 	"fmt"
 	"net/http"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"github.com/go-kit/kit/log/level"
+	"github.com/pkg/errors"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promauto"
 	"github.com/prometheus/common/model"
@@ -182,11 +182,26 @@ func (c *store) GetChunkRefs(ctx context.Context, userID string, from, through m
 }
 
 func (c *store) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error {
-	return c.chunks.(ObjectClient2).Scan(ctx, from, through, withValue, callbacks)
+	return errors.Wrap(c.index.(IndexClient2).Scan(ctx, from, through, withValue, callbacks), "Scan")
 }
 
 func (c *store) PutNoIndex(ctx context.Context, chunk Chunk) error {
 	return c.chunks.PutChunks(ctx, []Chunk{chunk})
+}
+
+func (c *store) DoneThisSeriesBefore(from, through model.Time, userID, seriesID string) bool {
+	return false
+}
+
+func (c *store) MarkThisSeriesDone(ctx context.Context, from, through model.Time, userID, seriesID string) {
+}
+
+func (c *store) IndexClient(ts model.Time) (IndexClient, error) {
+	return c.index, nil
+}
+
+func (c *store) AllChunksForSeries(ctx context.Context, userID string, seriesID string, from, through model.Time) ([]Chunk, error) {
+	return nil, errors.New("not implemented")
 }
 
 // LabelValuesForMetricName retrieves all label values for a single label name and metric name.

@@ -241,6 +241,10 @@ func (c *seriesStore) MarkThisSeriesDone(ctx context.Context, from, through mode
 	c.writeDedupeCache.Store(ctx, keys, bufs)
 }
 
+func (c *seriesStore) IndexClient(ts model.Time) (IndexClient, error) {
+	return c.index, nil
+}
+
 func (c *seriesStore) AllChunksForSeries(ctx context.Context, userID string, seriesID string, from, through model.Time) ([]Chunk, error) {
 	seriesIDs := []string{string(seriesID)}
 	chunkIDs, err := c.lookupChunksBySeries(ctx, from, through, userID, seriesIDs)
