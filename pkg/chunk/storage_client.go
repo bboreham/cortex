@@ -31,7 +31,7 @@ type ObjectAndIndexClient interface {
 // ObjectClient2 because naming is hard
 type ObjectClient2 interface {
 	ObjectClient
-	Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error
+	Scan(ctx context.Context, from, through model.Time, withValue bool, startSegment, totalSegments int, callbacks []func(result ReadBatch)) error
 }
 
 // WriteBatch represents a batch of writes.

@@ -16,12 +16,10 @@ import (
 	"github.com/cortexproject/cortex/pkg/util"
 )
 
-const gangSize = 10
-
 // ScanTable reads the whole of a table on multiple goroutines in
 // parallel, calling back with batches of results on one of the
 // callbacks for each goroutine.
-func (a dynamoDBStorageClient) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error {
+func (a dynamoDBStorageClient) Scan(ctx context.Context, from, through model.Time, withValue bool, startSegment, totalSegments int, callbacks []func(result chunk.ReadBatch)) error {
 	tableName, err := a.schemaCfg.IndexTableFor(from) // FIXME ignoring 'through'
 	if err != nil {
 		return err
@@ -31,21 +29,18 @@ func (a dynamoDBStorageClient) Scan(ctx context.Context, from, through model.Tim
 	if withValue {
 		projection += "," + valueKey
 	}
-	for startSegment := 0; startSegment < len(callbacks); startSegment += gangSize {
-		numToRun := len(callbacks) - startSegment
-		if numToRun > gangSize {
-			numToRun = gangSize
-		}
+	for ; startSegment < totalSegments; startSegment += len(callbacks) {
+		numToRun := util.Min(totalSegments-startSegment, len(callbacks))
 		level.Info(util.Logger).Log("msg", "Starting scan", "tableName", tableName, "startSegment", startSegment, "numToRun", numToRun)
 		var readerGroup sync.WaitGroup
 		readerGroup.Add(numToRun)
-		for i, callback := range callbacks[startSegment : startSegment+numToRun] {
+		for i, callback := range callbacks[:numToRun] {
 			go func(segment int, callback func(result chunk.ReadBatch)) {
 				input := &dynamodb.ScanInput{
 					TableName:              aws.String(tableName),
 					ProjectionExpression:   aws.String(projection),
 					Segment:                aws.Int64(int64(segment)),
-					TotalSegments:          aws.Int64(int64(len(callbacks))),
+					TotalSegments:          aws.Int64(int64(totalSegments)),
 					ReturnConsumedCapacity: aws.String(dynamodb.ReturnConsumedCapacityTotal),
 				}
 				withRetrys := func(req *request.Request) {

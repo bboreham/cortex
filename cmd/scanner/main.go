@@ -64,10 +64,12 @@ func main() {
 		deleteOrgsFile string
 		includeOrgsStr string
 
-		week     int64
-		segments int
-		loglevel string
-		address  string
+		week          int64
+		segments      int
+		totalSegments int
+		startSegment  int
+		loglevel      string
+		address       string
 
 		chunkReadCapacity int64
 		indexReadCapacity int64
@@ -80,6 +82,8 @@ func main() {
 	flag.Int64Var(&chunkReadCapacity, "chunk-read-provision", 1000, "DynamoDB read provision for chunk table")
 	flag.Int64Var(&indexReadCapacity, "index-read-provision", 1000, "DynamoDB read provision for chunk table")
 	flag.IntVar(&segments, "segments", 1, "Number of segments to read in parallel")
+	flag.IntVar(&totalSegments, "totalSegments", 0, "Number of segments to split table into (if zero then use number of parallel segments)")
+	flag.IntVar(&startSegment, "startSegment", 0, "Segment number to start at (useful after failed job)")
 	flag.StringVar(&deleteOrgsFile, "delete-orgs-file", "", "File containing IDs of orgs to delete")
 	flag.StringVar(&includeOrgsStr, "include-orgs", "", "IDs of orgs to include (space-separated)")
 	flag.StringVar(&loglevel, "log-level", "info", "Debug level: debug, info, warning, error")
@@ -158,8 +162,11 @@ func main() {
 		handlers[segment] = newHandler(chunkStore.(chunk.Store2), reindexStore.(chunk.Store2), indexTableName, includeOrgs, deleteOrgs)
 		callbacks[segment] = handlers[segment].handlePage
 	}
+	if totalSegments == 0 {
+		totalSegments = segments
+	}
 
-	err = chunkStore.(chunk.Store2).Scan(context.Background(), tableTime, tableTime, false, callbacks)
+	err = chunkStore.(chunk.Store2).Scan(context.Background(), tableTime, tableTime, false, startSegment, totalSegments, callbacks)
 	checkFatal(err)
 
 	level.Info(util.Logger).Log("msg", "finished, shutting down")
