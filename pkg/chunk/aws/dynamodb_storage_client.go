@@ -10,6 +10,7 @@ import (
 
 	"github.com/go-kit/kit/log/level"
 	ot "github.com/opentracing/opentracing-go"
+	otlog "github.com/opentracing/opentracing-go/log"
 	"golang.org/x/time/rate"
 
 	"github.com/aws/aws-sdk-go/aws"
@@ -152,7 +153,6 @@ type dynamoDBStorageClient struct {
 
 	// These functions exists for mocking, so we don't have to write a whole load
 	// of boilerplate.
-	queryRequestFn          func(ctx context.Context, input *dynamodb.QueryInput) dynamoDBRequest
 	batchGetItemRequestFn   func(ctx context.Context, input *dynamodb.BatchGetItemInput) dynamoDBRequest
 	batchWriteItemRequestFn func(ctx context.Context, input *dynamodb.BatchWriteItemInput) dynamoDBRequest
 }
@@ -181,7 +181,6 @@ func newDynamoDBStorageClient(cfg DynamoDBConfig, schemaCfg chunk.SchemaConfig) 
 		readThrottle:  rate.NewLimiter(rate.Limit(cfg.ThrottleLimit), dynamoDBMaxReadBatchSize),
 		writeThrottle: rate.NewLimiter(rate.Limit(cfg.ThrottleLimit), dynamoDBMaxWriteBatchSize),
 	}
-	client.queryRequestFn = client.queryRequest
 	client.batchGetItemRequestFn = client.batchGetItemRequest
 	client.batchWriteItemRequestFn = client.batchWriteItemRequest
 	return client, nil
@@ -344,72 +343,35 @@ func (a dynamoDBStorageClient) query(ctx context.Context, query chunk.IndexQuery
 		}
 	}
 
-	request := a.queryRequestFn(ctx, input)
 	pageCount := 0
 	defer func() {
 		dynamoQueryPagesCount.Observe(float64(pageCount))
 	}()
 
-	for page := request; page != nil; page = page.NextPage() {
-		pageCount++
-
-		response, err := a.queryPage(ctx, input, page, query.HashValue, pageCount)
-		if err != nil {
-			return err
+	retryer := newRetryer(ctx, a.cfg.backoffConfig)
+	err := instrument.CollectedRequest(ctx, "DynamoDB.QueryPages", dynamoRequestDuration, instrument.ErrorCode, func(innerCtx context.Context) error {
+		if sp := ot.SpanFromContext(innerCtx); sp != nil {
+			sp.SetTag("tableName", query.TableName)
+			sp.SetTag("hashValue", query.HashValue)
 		}
-
-		if !callback(response) {
-			if err != nil {
-				return fmt.Errorf("QueryPages error: table=%v, err=%v", *input.TableName, page.Error())
-			}
-			return nil
-		}
-		if !page.HasNextPage() {
-			return nil
-		}
-	}
-	return nil
-}
-
-func (a dynamoDBStorageClient) queryPage(ctx context.Context, input *dynamodb.QueryInput, page dynamoDBRequest, hashValue string, pageCount int) (*dynamoDBReadResponse, error) {
-	backoff := util.NewBackoff(ctx, a.cfg.backoffConfig)
-
-	var err error
-	for backoff.Ongoing() {
-		err = instrument.CollectedRequest(ctx, "DynamoDB.QueryPages", dynamoRequestDuration, instrument.ErrorCode, func(innerCtx context.Context) error {
+		return a.DynamoDB.QueryPagesWithContext(ctx, input, func(output *dynamodb.QueryOutput, _ bool) bool {
+			pageCount++
 			if sp := ot.SpanFromContext(innerCtx); sp != nil {
-				sp.SetTag("tableName", aws.StringValue(input.TableName))
-				sp.SetTag("hashValue", hashValue)
-				sp.SetTag("page", pageCount)
-				sp.SetTag("retry", backoff.NumRetries())
+				sp.LogFields(otlog.Int("page", pageCount))
 			}
-			return page.Send()
-		})
 
-		if cc := page.Data().(*dynamodb.QueryOutput).ConsumedCapacity; cc != nil {
-			dynamoConsumedCapacity.WithLabelValues("DynamoDB.QueryPages", *cc.TableName).
-				Add(float64(*cc.CapacityUnits))
-		}
-
-		if err != nil {
-			recordDynamoError(*input.TableName, err, "DynamoDB.QueryPages")
-			if awsErr, ok := err.(awserr.Error); ok && ((awsErr.Code() == dynamodb.ErrCodeProvisionedThroughputExceededException) || page.Retryable()) {
-				if awsErr.Code() != dynamodb.ErrCodeProvisionedThroughputExceededException {
-					level.Warn(util.Logger).Log("msg", "DynamoDB error", "retry", backoff.NumRetries(), "table", *input.TableName, "err", err)
-				}
-				backoff.Wait()
-				a.readThrottle.WaitN(ctx, 1)
-				continue
+			if cc := output.ConsumedCapacity; cc != nil {
+				dynamoConsumedCapacity.WithLabelValues("DynamoDB.QueryPages", *cc.TableName).
+					Add(float64(*cc.CapacityUnits))
 			}
-			return nil, fmt.Errorf("QueryPage error: table=%v, err=%v", *input.TableName, err)
-		}
 
-		queryOutput := page.Data().(*dynamodb.QueryOutput)
-		return &dynamoDBReadResponse{
-			items: queryOutput.Items,
-		}, nil
+			return callback(&dynamoDBReadResponse{items: output.Items})
+		}, retryer.withRetrys, withErrorHandler(query.TableName, "DynamoDB.QueryPages"))
+	})
+	if err != nil {
+		return fmt.Errorf("QueryPage error: table=%v, err=%v", query.TableName, err)
 	}
-	return nil, fmt.Errorf("QueryPage error: %s for table %v, last error %v", backoff.Err(), *input.TableName, err)
+	return err
 }
 
 type dynamoDBRequest interface {
@@ -419,12 +381,6 @@ type dynamoDBRequest interface {
 	Error() error
 	HasNextPage() bool
 	Retryable() bool
-}
-
-func (a dynamoDBStorageClient) queryRequest(ctx context.Context, input *dynamodb.QueryInput) dynamoDBRequest {
-	req, _ := a.DynamoDB.QueryRequest(input)
-	req.SetContext(ctx)
-	return dynamoDBRequestAdapter{req}
 }
 
 func (a dynamoDBStorageClient) batchGetItemRequest(ctx context.Context, input *dynamodb.BatchGetItemInput) dynamoDBRequest {
@@ -847,6 +803,16 @@ func (b dynamoDBReadRequest) TakeReqs(from dynamoDBReadRequest, max int) {
 				toFill -= taken
 			}
 		}
+	}
+}
+
+func withErrorHandler(tableName, operation string) func(req *request.Request) {
+	return func(req *request.Request) {
+		req.Handlers.CompleteAttempt.PushBack(func(req *request.Request) {
+			if req.Error != nil {
+				recordDynamoError(tableName, req.Error, operation)
+			}
+		})
 	}
 }
 
