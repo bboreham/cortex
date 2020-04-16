@@ -613,6 +613,35 @@ func isBogus(org int, lbls labels.Labels) bool {
 	if metricName == "kube_configmap_metadata_resource_version" {
 		return true
 	}
+	// Reduce bucket density - from https://github.com/coreos/kube-prometheus/blob/48d95f0b9fc9/manifests/prometheus-serviceMonitorApiserver.yaml
+	if metricName == "apiserver_request_duration_seconds_bucket" {
+		le := lbls.Get("le")
+		if le == "0.15" || le == "0.25" || le == "0.3" || le == "0.35" || le == "0.4" || le == "0.45" || le == "0.6" || le == "0.7" || le == "0.8" || le == "0.9" || le == "1.25" || le == "1.5" || le == "1.75" || le == "2.5" || le == "3" || le == "3.5" || le == "4.5" || le == "6" || le == "7" || le == "8" || le == "9" || le == "15" || le == "25" || le == "30" || le == "50" {
+			return true
+		}
+	}
+	// Obsolete kubelet metrics - from https://github.com/coreos/kube-prometheus/blob/a8b4985de4dc/jsonnet/kube-prometheus/dropping-deprecated-metrics-relabelings.libsonnet
+	if strings.HasPrefix(metricName, "kubelet_") {
+		if metricName == "kubelet_pod_worker_latency_microseconds" ||
+			metricName == "kubelet_pod_start_latency_microseconds" ||
+			metricName == "kubelet_cgroup_manager_latency_microseconds" ||
+			metricName == "kubelet_pod_worker_start_latency_microseconds" ||
+			metricName == "kubelet_pleg_relist_latency_microseconds" ||
+			metricName == "kubelet_pleg_relist_interval_microseconds" ||
+			metricName == "kubelet_runtime_operations" ||
+			metricName == "kubelet_runtime_operations_latency_microseconds" ||
+			metricName == "kubelet_runtime_operations_errors" ||
+			metricName == "kubelet_eviction_stats_age_microseconds" ||
+			metricName == "kubelet_device_plugin_registration_count" ||
+			metricName == "kubelet_device_plugin_alloc_latency_microseconds" ||
+			metricName == "kubelet_network_plugin_operations_latency_microseconds" ||
+			metricName == "kubelet_docker_operations" ||
+			metricName == "kubelet_docker_operations_latency_microseconds" ||
+			metricName == "kubelet_docker_operations_errors" ||
+			metricName == "kubelet_docker_operations_timeout" {
+			return true
+		}
+	}
 	return false
 }
 
