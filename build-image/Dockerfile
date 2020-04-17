@@ -1,5 +1,5 @@
-FROM golang:1.13.0-stretch
-RUN apt-get update && apt-get install -y python-requests python-yaml file jq unzip protobuf-compiler libprotobuf-dev && \
+FROM golang:1.13.5-stretch
+RUN apt-get update && apt-get install -y curl python-requests python-yaml file jq unzip protobuf-compiler libprotobuf-dev && \
 	rm -rf /var/lib/apt/lists/* /tmp/* /var/tmp/*
 RUN go clean -i net && \
 	go install -tags netgo std && \
