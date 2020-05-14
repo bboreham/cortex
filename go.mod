@@ -18,6 +18,7 @@ require (
 	github.com/dustin/go-humanize v1.0.0
 	github.com/facette/natsort v0.0.0-20181210072756-2cd4dd1e2dcb
 	github.com/fsouza/fake-gcs-server v1.7.0
+	github.com/ghodss/yaml v1.0.0
 	github.com/go-kit/kit v0.10.0
 	github.com/gocql/gocql v0.0.0-20200121121104-95d072f1b5bb
 	github.com/gogo/protobuf v1.3.1
@@ -62,6 +63,9 @@ require (
 	google.golang.org/api v0.14.0
 	google.golang.org/grpc v1.26.0
 	gopkg.in/yaml.v2 v2.2.8
+	k8s.io/api v0.0.0-20191115095533-47f6de673b26
+	k8s.io/apimachinery v0.0.0-20191115015347-3c7067801da2
+	k8s.io/client-go v12.0.0+incompatible
 	sigs.k8s.io/yaml v1.1.0
 )
 
