@@ -716,6 +716,10 @@ func (m mockSeriesStoreSchema) GetSeriesDeleteEntries(from, through model.Time, 
 	return m.schema.GetSeriesDeleteEntries(from, through, userID, metric, hasChunksForIntervalFunc)
 }
 
+func (m mockSeriesStoreSchema) GetLabelEntryCacheKeys2(from, through model.Time, userID, seriesID string) []string {
+	return nil
+}
+
 func mustNewLabelMatcher(matchType labels.MatchType, name string, value string) *labels.Matcher {
 	return labels.MustNewMatcher(matchType, name, value)
 }
