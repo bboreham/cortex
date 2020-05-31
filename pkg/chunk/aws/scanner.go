@@ -62,6 +62,6 @@ func (a dynamoDBStorageClient) Scan(ctx context.Context, from, through model.Tim
 	return outerErr
 }
 
-func (a s3ObjectClient) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error {
+func (a S3ObjectClient) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error {
 	return errors.New("not implemented")
 }
