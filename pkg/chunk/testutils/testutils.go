@@ -120,7 +120,7 @@ func SetupTestChunkStore() (chunk.Store, error) {
 		return nil, err
 	}
 
-	err = tableManager.SyncTables(context.Background())
+	err = tableManager.SyncTables(context.Background(), mtime.Now(), mtime.Now().Add(tbmConfig.CreationGracePeriod))
 	if err != nil {
 		return nil, err
 	}

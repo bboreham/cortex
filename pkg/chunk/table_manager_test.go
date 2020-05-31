@@ -97,7 +97,7 @@ func tmTest(t *testing.T, client *mockTableClient, tableManager *TableManager, n
 		ctx := context.Background()
 		mtime.NowForce(tm)
 		defer mtime.NowReset()
-		if err := tableManager.SyncTables(ctx, mtime.Now(), mtime.Now()); err != nil {
+		if err := tableManager.SyncTables(ctx, mtime.Now(), mtime.Now().Add(tableManager.cfg.CreationGracePeriod)); err != nil {
 			t.Fatal(err)
 		}
 		err := ExpectTables(ctx, client, expected)
