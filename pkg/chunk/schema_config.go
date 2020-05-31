@@ -81,7 +81,10 @@ func (cfg *SchemaConfig) RegisterFlags(f *flag.FlagSet) {
 }
 
 // loadFromFile loads the schema config from a yaml file
-func (cfg *SchemaConfig) loadFromFile() error {
+func (cfg *SchemaConfig) LoadFromFile(fileName string) error {
+	if fileName != "" { //slight hack
+		cfg.fileName = fileName
+	}
 	if cfg.fileName == "" {
 		cfg.fileName = cfg.legacyFileName
 
@@ -215,7 +218,7 @@ func (cfg *SchemaConfig) Load() error {
 	}
 
 	// Load config from file.
-	if err := cfg.loadFromFile(); err != nil {
+	if err := cfg.LoadFromFile(""); err != nil {
 		return err
 	}
 
