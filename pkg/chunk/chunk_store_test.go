@@ -25,8 +25,6 @@ import (
 	"github.com/cortexproject/cortex/pkg/util/flagext"
 	"github.com/cortexproject/cortex/pkg/util/validation"
 	"github.com/weaveworks/common/mtime"
-	"github.com/weaveworks/common/test"
-	"github.com/weaveworks/common/user"
 )
 
 type configFactory func() StoreConfig
