@@ -114,9 +114,9 @@ func main() {
 	err := schemaConfig.Load()
 	checkFatal(err)
 
-	overrides, err := validation.NewOverrides(limitsConfig)
+	overrides, err := validation.NewOverrides(limitsConfig, nil)
 	checkFatal(err)
-	chunkStore, err := storage.NewStore(storageConfig, chunkStoreConfig, schemaConfig, overrides)
+	chunkStore, err := storage.NewStore(storageConfig, chunkStoreConfig, schemaConfig, overrides, prometheus.DefaultRegisterer, nil)
 	checkFatal(err)
 	defer chunkStore.Stop()
 
@@ -128,7 +128,7 @@ func main() {
 		if len(rechunkConfig.Configs) != 1 {
 			checkFatal(fmt.Errorf("rechunk config must have 1 config"))
 		}
-		reindexStore, err = storage.NewStore(storageConfig, chunkStoreConfig, rechunkConfig, overrides)
+		reindexStore, err = storage.NewStore(storageConfig, chunkStoreConfig, rechunkConfig, overrides, prometheus.DefaultRegisterer, nil)
 		checkFatal(err)
 		tm, err = setupTableManager(tbmConfig, storageConfig, rechunkConfig, tableTime)
 		checkFatal(err)
@@ -208,7 +208,7 @@ func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage
 		if err != nil {
 			return nil, errors.Wrap(err, "creating table client")
 		}
-		tmNoMetrics, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tcNoMetrics, nil)
+		tmNoMetrics, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tcNoMetrics, nil, prometheus.DefaultRegisterer)
 		if err != nil {
 			return nil, errors.Wrap(err, "initializing table manager")
 		}
@@ -234,7 +234,7 @@ func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage
 	tm := &tableManager{
 		done: make(chan struct{}),
 	}
-	tm.TableManager, err = chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient, nil)
+	tm.TableManager, err = chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient, nil, prometheus.DefaultRegisterer)
 	if err != nil {
 		return nil, errors.Wrap(err, "initializing table manager")
 	}
