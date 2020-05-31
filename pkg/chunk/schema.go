@@ -208,7 +208,7 @@ func (s seriesStoreSchema) GetChunkWriteEntries(from, through model.Time, userID
 }
 
 // Should only used for v9Schema
-func (s schema) GetLabelEntryCacheKeys2(from, through model.Time, userID string, seriesID string) []string {
+func (s baseSchema) GetLabelEntryCacheKeys2(from, through model.Time, userID string, seriesID string) []string {
 	var result []string
 	for _, bucket := range s.buckets(from, through, userID) {
 		key := strings.Join([]string{
