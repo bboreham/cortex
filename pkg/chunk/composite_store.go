@@ -123,21 +123,21 @@ func (c compositeStore) PutOne(ctx context.Context, from, through model.Time, ch
 }
 
 func (c compositeStore) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error {
-	return c.forStores(from, through, func(from, through model.Time, store Store) error {
-		return store.(Store2).Scan(ctx, from, through, withValue, callbacks)
+	return c.forStores(ctx, "", from, through, func(innerCtx context.Context, from, through model.Time, store Store) error {
+		return store.(Store2).Scan(innerCtx, from, through, withValue, callbacks)
 	})
 }
 
 func (c compositeStore) PutNoIndex(ctx context.Context, chunk Chunk) error {
-	err := c.forStores(chunk.From, chunk.Through, func(from, through model.Time, store Store) error {
-		return store.(Store2).PutNoIndex(ctx, chunk)
+	err := c.forStores(ctx, "", chunk.From, chunk.Through, func(innerCtx context.Context, from, through model.Time, store Store) error {
+		return store.(Store2).PutNoIndex(innerCtx, chunk)
 	})
 	return err
 }
 
-func (c compositeStore) DoneThisSeriesBefore(from, through model.Time, userID, seriesID string) bool {
+func (c compositeStore) DoneThisSeriesBefore(ctx context.Context, from, through model.Time, userID, seriesID string) bool {
 	doneBefore := false
-	c.forStores(from, through, func(from, through model.Time, store Store) error {
+	c.forStores(ctx, userID, from, through, func(innerCtx context.Context, from, through model.Time, store Store) error {
 		doneBefore = doneBefore || store.(Store2).DoneThisSeriesBefore(from, through, userID, seriesID)
 		return nil
 	})
@@ -145,16 +145,16 @@ func (c compositeStore) DoneThisSeriesBefore(from, through model.Time, userID, s
 }
 
 func (c compositeStore) MarkThisSeriesDone(ctx context.Context, from, through model.Time, userID, seriesID string) {
-	c.forStores(from, through, func(from, through model.Time, store Store) error {
-		store.(Store2).MarkThisSeriesDone(ctx, from, through, userID, seriesID)
+	c.forStores(ctx, userID, from, through, func(innerCtx context.Context, from, through model.Time, store Store) error {
+		store.(Store2).MarkThisSeriesDone(innerCtx, from, through, userID, seriesID)
 		return nil
 	})
 }
 
 func (c compositeStore) AllChunksForSeries(ctx context.Context, userID, seriesID string, from, through model.Time) ([]Chunk, error) {
 	var ret []Chunk
-	err := c.forStores(from, through, func(from, through model.Time, store Store) error {
-		chunks, err := store.(Store2).AllChunksForSeries(ctx, userID, seriesID, from, through)
+	err := c.forStores(ctx, userID, from, through, func(innerCtx context.Context, from, through model.Time, store Store) error {
+		chunks, err := store.(Store2).AllChunksForSeries(innerCtx, userID, seriesID, from, through)
 		ret = append(ret, chunks...)
 		return err
 	})
