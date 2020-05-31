@@ -637,6 +637,8 @@ type mockBaseSchema struct {
 	queries []string
 }
 
+var _ BaseSchema = &mockBaseSchema{}
+
 func (m *mockBaseSchema) getQueries() []string {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -681,6 +683,8 @@ type mockStoreSchema struct {
 	schema StoreSchema
 }
 
+var _ StoreSchema = mockStoreSchema{}
+
 func (m mockStoreSchema) GetWriteEntries(from, through model.Time, userID string, metricName string, labels labels.Labels, chunkID string) ([]IndexEntry, error) {
 	return m.schema.GetWriteEntries(from, through, userID, metricName, labels, chunkID)
 }
@@ -689,6 +693,8 @@ type mockSeriesStoreSchema struct {
 	*mockBaseSchema
 	schema SeriesStoreSchema
 }
+
+var _ SeriesStoreSchema = mockSeriesStoreSchema{}
 
 func (m mockSeriesStoreSchema) GetCacheKeysAndLabelWriteEntries(from, through model.Time, userID string, metricName string, labels labels.Labels, chunkID string) ([]string, [][]IndexEntry, error) {
 	return m.schema.GetCacheKeysAndLabelWriteEntries(from, through, userID, metricName, labels, chunkID)

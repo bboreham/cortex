@@ -121,17 +121,23 @@ type baseSchema struct {
 	entries baseEntries
 }
 
+var _ BaseSchema = baseSchema{}
+
 // storeSchema implements StoreSchema given a bucketing function and and set of range key callbacks
 type storeSchema struct {
 	baseSchema
 	entries storeEntries
 }
 
+var _ StoreSchema = storeSchema{}
+
 // seriesStoreSchema implements SeriesStoreSchema given a bucketing function and and set of range key callbacks
 type seriesStoreSchema struct {
 	baseSchema
 	entries seriesStoreEntries
 }
+
+var _ SeriesStoreSchema = seriesStoreSchema{}
 
 func newStoreSchema(buckets schemaBucketsFunc, entries storeEntries) storeSchema {
 	return storeSchema{
