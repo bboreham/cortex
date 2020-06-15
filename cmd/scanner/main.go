@@ -589,13 +589,6 @@ func isBogus(org int, lbls labels.Labels) bool {
 		return false
 	}
 	metricName := lbls.Get(labels.MetricName)
-	if org == 13040 || org == 13049 || org == 13124 {
-		if strings.HasPrefix(metricName, "kafka_streams_stream_processor_node_metrics_") ||
-			strings.HasPrefix(metricName, "kafka_consumer_consumer_node_metrics_") ||
-			strings.HasPrefix(metricName, "kafka_producer_producer_node_metrics_") {
-			return true
-		}
-	}
 	if strings.HasPrefix(metricName, "container_") {
 		// Drop metrics which are disabled but still sent as all zeros by kubelet
 		if metricName == "container_network_tcp_usage_total" ||
