@@ -512,7 +512,7 @@ func decodeDayNumber(day string) (model.Time, model.Time, error) {
 	return from, through, nil
 }
 
-func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Time) (*chunk.Chunk, []chunk.Chunk, error) {
+func dedupeAndStore(db *tsdb.TSDB, userID, seriesID string, from, through model.Time) error {
 	// FIXME: this shouldn't really be necessary, but store query APIs rely on it
 	ctx := user.InjectOrgID(context.Background(), userID)
 	chunks, err := dstore.AllChunksForSeries(ctx, userID, seriesID, from, through)
@@ -522,54 +522,35 @@ func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Ti
 	if len(chunks) == 0 {
 		return nil, nil, fmt.Errorf("no chunks found for %s:%s for %v-%v", userID, seriesID, from, through)
 	}
-	data, first, last, err := dataFromChunks(from, through, chunks)
-	if err != nil {
-		return nil, nil, err
-	}
-	//level.Info(util.Logger).Log("msg", "new chunk", "userID", userID, "fp", chunks[0].Fingerprint, "metric", chunks[0].Metric, "first", first, "last", last)
-	ret := &chunk.Chunk{
-		Fingerprint: chunks[0].Fingerprint,
-		UserID:      userID,
-		From:        model.Time(first),
-		Through:     model.Time(last),
-		Metric:      chunks[0].Metric,
-		Encoding:    encoding.Bigchunk,
-		Data:        data,
-	}
-	err = ret.Encode()
-	if err != nil {
-		return nil, nil, err
-	}
-	var extras []chunk.Chunk
-	if copyChunksForNextWeek {
-		for _, c := range chunks {
-			if c.Through > endOfWeek {
-				extras = append(extras, c)
-			}
-		}
-	}
-	return ret, extras, nil
-}
 
-// unpack and dedupe all samples from previous chunks; create one new chunk.
-func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encoding.Chunk, first, last int64, err error) {
-	ret, err = encoding.NewForEncoding(encoding.Bigchunk)
-	if err != nil {
-		return
-	}
+	// unpack and dedupe all samples from previous chunks; store in TSDB
 	iter := batch.NewChunkMergeIterator(chunks, 0, 0)
 	if !iter.Seek(int64(from)) {
 		err = fmt.Errorf("Could not seek to start time")
 		return
 	}
-	first, _ = iter.At()
+	labels = chunks[0].Metric
+	var ref uint64
 	for {
 		ts, v := iter.At()
 		if ts > int64(through) {
 			break
 		}
-		last = ts
-		ret.Add(model.SamplePair{Timestamp: model.Time(ts), Value: model.SampleValue(v)})
+		if ref != 0 {
+			// Try using reference from previous Add()
+			err = db.AddFast(ref, ts, v)
+			if err == nil {
+				goto next
+			} else if errors.Cause(err) != storage.ErrNotFound {
+				return err
+			}
+		}
+		// Either we didn't have a reference, or we had one and it was rejected
+		ref, err = db.Add(labels, ts, v)
+		if err != nil {
+			return err
+		}
+	next:
 		if !iter.Next() {
 			break
 		}
