@@ -866,7 +866,7 @@ func (s *Server) incrCallsFailed() {
 }
 
 func (s *Server) sendResponse(t transport.ServerTransport, stream *transport.Stream, msg interface{}, cp Compressor, opts *transport.Options, comp encoding.Compressor) error {
-	data, err := encode(s.getCodec(stream.ContentSubtype()), msg)
+	data, err := encode(s.getCodec(stream.ContentSubtype()), msg, nil)
 	if err != nil {
 		channelz.Error(s.channelzID, "grpc: server failed to encode response: ", err)
 		return err

@@ -48,3 +48,8 @@ type Codec interface {
 	// gRPC.
 	String() string
 }
+
+type marshalTo interface {
+	Size() int
+	MarshalToSizedBuffer([]byte) (int, error)
+}

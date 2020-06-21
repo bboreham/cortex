@@ -461,6 +461,23 @@ func (i *Ingester) transferOut(ctx context.Context) error {
 	defer c.Close()
 
 	ctx = user.InjectOrgID(ctx, "-1")
+
+	err = i.streamAllChunksTo(ctx, userStatesCopy, c)
+	if err != nil {
+		return err
+	}
+
+	// Close & empty all the flush queues, to unblock waiting workers.
+	for _, flushQueue := range i.flushQueues {
+		flushQueue.DiscardAndClose()
+	}
+	i.flushQueuesDone.Wait()
+
+	level.Info(util.Logger).Log("msg", "successfully sent chunks", "to_ingester", targetIngester.Addr)
+	return nil
+}
+
+func (i *Ingester) streamAllChunksTo(ctx context.Context, userStatesCopy map[string]*userState, c client.HealthAndIngesterClient) error {
 	stream, err := c.TransferChunks(ctx)
 	if err != nil {
 		return errors.Wrap(err, "TransferChunks")
@@ -501,14 +518,6 @@ func (i *Ingester) transferOut(ctx context.Context) error {
 	if err != nil {
 		return errors.Wrap(err, "CloseAndRecv")
 	}
-
-	// Close & empty all the flush queues, to unblock waiting workers.
-	for _, flushQueue := range i.flushQueues {
-		flushQueue.DiscardAndClose()
-	}
-	i.flushQueuesDone.Wait()
-
-	level.Info(util.Logger).Log("msg", "successfully sent chunks", "to_ingester", targetIngester.Addr)
 	return nil
 }
 

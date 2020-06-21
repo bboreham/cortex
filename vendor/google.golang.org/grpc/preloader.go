@@ -50,7 +50,7 @@ func (p *PreparedMsg) Encode(s Stream, msg interface{}) error {
 	}
 
 	// prepare the msg
-	data, err := encode(rpcInfo.preloaderInfo.codec, msg)
+	data, err := encode(rpcInfo.preloaderInfo.codec, msg, p.encodedData)
 	if err != nil {
 		return err
 	}
