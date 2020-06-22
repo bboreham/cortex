@@ -635,6 +635,10 @@ func isBogus(org int, lbls labels.Labels) bool {
 			return true
 		}
 	}
+	// Metric names which are so long and convoluted no-one is going to use them
+	if len(metricName) > 100 && strings.Count(metricName, "_") > 12 {
+		return true
+	}
 	return false
 }
 
