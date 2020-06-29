@@ -427,14 +427,14 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			continue
 		}
 
-		newChunk, extras, err := dedupe(h.readStore, orgStr, seriesID, from, through)
+		newChunk, extras, allZeroes, err := dedupe(h.readStore, orgStr, seriesID, from, through)
 		if err != nil {
 			level.Error(util.Logger).Log("msg", "chunk dedupe error", "err", err)
 			continue
 		}
 		metricName := newChunk.Metric.Get(labels.MetricName)
 		switch {
-		case isBogus(org, newChunk.Metric):
+		case isBogus(org, newChunk.Metric, allZeroes):
 			h.counts[org][metricName+"-bogus"]++
 		case newChunk.Data.Len() < minChunkLength:
 			h.counts[org][metricName+"-bogus-tiny"]++
@@ -519,19 +519,19 @@ func decodeDayNumber(day string) (model.Time, model.Time, error) {
 	return from, through, nil
 }
 
-func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Time) (*chunk.Chunk, []chunk.Chunk, error) {
+func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Time) (*chunk.Chunk, []chunk.Chunk, bool, error) {
 	// FIXME: this shouldn't really be necessary, but store query APIs rely on it
 	ctx := user.InjectOrgID(context.Background(), userID)
 	chunks, err := dstore.AllChunksForSeries(ctx, userID, seriesID, from, through)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	if len(chunks) == 0 {
-		return nil, nil, fmt.Errorf("no chunks found for %s:%s for %v-%v", userID, seriesID, from, through)
+		return nil, nil, false, fmt.Errorf("no chunks found for %s:%s for %v-%v", userID, seriesID, from, through)
 	}
-	data, first, last, err := dataFromChunks(from, through, chunks)
+	data, first, last, allZeroes, err := dataFromChunks(from, through, chunks)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	//level.Info(util.Logger).Log("msg", "new chunk", "userID", userID, "fp", chunks[0].Fingerprint, "metric", chunks[0].Metric, "first", first, "last", last)
 	ret := &chunk.Chunk{
@@ -545,7 +545,7 @@ func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Ti
 	}
 	err = ret.Encode()
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	var extras []chunk.Chunk
 	if copyChunksForNextWeek {
@@ -555,11 +555,11 @@ func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Ti
 			}
 		}
 	}
-	return ret, extras, nil
+	return ret, extras, allZeroes, nil
 }
 
 // unpack and dedupe all samples from previous chunks; create one new chunk.
-func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encoding.Chunk, first, last int64, err error) {
+func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encoding.Chunk, first, last int64, allZeroes bool, err error) {
 	ret, err = encoding.NewForEncoding(encoding.Bigchunk)
 	if err != nil {
 		return
@@ -570,12 +570,16 @@ func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encodin
 		return
 	}
 	first, _ = iter.At()
+	allZeroes = true
 	for {
 		ts, v := iter.At()
 		if ts > int64(through) {
 			break
 		}
 		last = ts
+		if v != 0 {
+			allZeroes = false
+		}
 		ret.Add(model.SamplePair{Timestamp: model.Time(ts), Value: model.SampleValue(v)})
 		if !iter.Next() {
 			break
@@ -584,7 +588,7 @@ func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encodin
 	return
 }
 
-func isBogus(org int, lbls labels.Labels) bool {
+func isBogus(org int, lbls labels.Labels, allZeroes bool) bool {
 	if !removeBogusKubeletMetrics {
 		return false
 	}
@@ -597,10 +601,16 @@ func isBogus(org int, lbls labels.Labels) bool {
 			metricName == "container_cpu_load_average_10s" {
 			return true
 		}
-		// Drop all cAdvisor metrics for leaked systemd tasks
 		id := lbls.Get("id")
-		if strings.HasPrefix(id, "/system.slice/run-") && strings.HasSuffix(id, "scope") {
-			return true
+		if strings.HasPrefix(id, "/system.slice") {
+			// Drop series for systemd tasks which are all-zero
+			if allZeroes {
+				return true
+			}
+			// Drop all cAdvisor metrics for leaked systemd tasks
+			if strings.HasPrefix(id, "/system.slice/run-") && strings.HasSuffix(id, "scope") {
+				return true
+			}
 		}
 	}
 	if metricName == "kube_configmap_metadata_resource_version" {
