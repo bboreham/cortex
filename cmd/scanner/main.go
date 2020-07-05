@@ -18,6 +18,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/prometheus/common/model"
 	"github.com/prometheus/prometheus/pkg/labels"
+	promStorage "github.com/prometheus/prometheus/storage"
+	"github.com/prometheus/prometheus/tsdb"
 
 	"github.com/go-kit/kit/log/level"
 	"github.com/weaveworks/common/logging"
@@ -120,20 +122,6 @@ func main() {
 	checkFatal(err)
 	defer chunkStore.Stop()
 
-	var reindexStore chunk.Store
-	var tm *tableManager
-	if rechunkSchemaFile != "" {
-		err := rechunkConfig.LoadFromFile(rechunkSchemaFile)
-		checkFatal(err)
-		if len(rechunkConfig.Configs) != 1 {
-			checkFatal(fmt.Errorf("rechunk config must have 1 config"))
-		}
-		reindexStore, err = storage.NewStore(storageConfig, chunkStoreConfig, rechunkConfig, overrides, prometheus.DefaultRegisterer, nil)
-		checkFatal(err)
-		tm, err = setupTableManager(tbmConfig, storageConfig, rechunkConfig, tableTime)
-		checkFatal(err)
-	}
-
 	tableName, err := schemaConfig.ChunkTableFor(tableTime)
 	checkFatal(err)
 	fmt.Printf("table %s\n", tableName)
@@ -146,10 +134,6 @@ func main() {
 	checkFatal(err)
 	prevIndexReadCapacity, err := setReadCapacity(context.Background(), readClient, indexTableName, indexReadCapacity)
 	checkFatal(err)
-
-	if tm != nil {
-		tm.WaitForAllActive(context.Background(), tableTime.Time(), tableTime.Time())
-	}
 
 	handlers := make([]handler, segments)
 	callbacks := make([]func(result chunk.ReadBatch), segments)
@@ -189,60 +173,6 @@ func main() {
 	time.Sleep(20 * time.Second) // get one more scrape in for final metrics
 }
 
-// wrap the "real" TableManager
-type tableManager struct {
-	*chunk.TableManager
-	done chan struct{}
-}
-
-func setupTableManager(tbmConfig chunk.TableManagerConfig, storageConfig storage.Config, rechunkConfig chunk.SchemaConfig, tableTime model.Time) (*tableManager, error) {
-	// We want our table-manager to manage just a one-week period
-	rechunkConfig.Configs[0].From.Time = tableTime
-	tbmConfig.CreationGracePeriod = time.Hour * 1
-
-	{
-		// First, run a pass with no metrics autoscaling, so we just get max throughput
-		scNoMetrics := storageConfig
-		scNoMetrics.AWSStorageConfig.Metrics.URL = ""
-		tcNoMetrics, err := storage.NewTableClient(rechunkConfig.Configs[0].IndexType, scNoMetrics)
-		if err != nil {
-			return nil, errors.Wrap(err, "creating table client")
-		}
-		tmNoMetrics, err := chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tcNoMetrics, nil, prometheus.DefaultRegisterer)
-		if err != nil {
-			return nil, errors.Wrap(err, "initializing table manager")
-		}
-		err = tmNoMetrics.SyncTables(context.Background(), tableTime.Time(), tableTime.Time())
-		if err != nil {
-			return nil, errors.Wrap(err, "sync tables")
-		}
-	}
-
-	// Now go back and create client and TableManager for real
-	// We need to "trick" the metrics auto-scaling into scaling up and down,
-	// even though we don't have a queue that it's used to looking at.
-	// Pretend we have a queue that is always enormous and also always shrinking
-	trickQuery := "2000000000-timestamp(count(up))"
-	storageConfig.AWSStorageConfig.Metrics.QueueLengthQuery = trickQuery
-	// Reduce query window from 15m to 2m so we don't blur things so much
-	storageConfig.AWSStorageConfig.Metrics.UsageQuery = `sum(rate(cortex_dynamo_consumed_capacity_total{operation="DynamoDB.BatchWriteItem"}[2m])) by (table) > 0`
-
-	tableClient, err := storage.NewTableClient(rechunkConfig.Configs[0].IndexType, storageConfig)
-	if err != nil {
-		return nil, errors.Wrap(err, "creating table client")
-	}
-	tm := &tableManager{
-		done: make(chan struct{}),
-	}
-	tm.TableManager, err = chunk.NewTableManager(tbmConfig, rechunkConfig, 0, tableClient, nil, prometheus.DefaultRegisterer)
-	if err != nil {
-		return nil, errors.Wrap(err, "initializing table manager")
-	}
-	// Sync continuously in background
-	go tm.loop(tableTime.Time())
-	return tm, nil
-}
-
 func setReadCapacity(ctx context.Context, client chunk.TableClient, tableName string, val int64) (int64, error) {
 	current, _, err := client.DescribeTable(ctx, tableName)
 	if err != nil {
@@ -264,30 +194,6 @@ func setReadCapacity(ctx context.Context, client chunk.TableClient, tableName st
 	}
 	err = client.UpdateTable(ctx, current, updated)
 	return prevReadCapacity, err
-}
-
-func (m *tableManager) Stop() {
-	// Send on chan rather than close() so we don't return until the send is received
-	m.done <- struct{}{}
-}
-
-// Sync like the real table-manager does, but at the specific time we are operating
-func (m *tableManager) loop(atTime time.Time) {
-	time.Sleep(6 * time.Minute) // wait a bit to allow perf to settle
-	ctx := context.Background()
-	ticker := time.NewTicker(2 * time.Minute)
-	defer ticker.Stop()
-
-	for {
-		select {
-		case <-ticker.C:
-			if err := m.SyncTables(ctx, atTime, atTime); err != nil {
-				level.Error(util.Logger).Log("msg", "error syncing tables", "err", err)
-			}
-		case <-m.done:
-			return
-		}
-	}
 }
 
 func setupOrgs(deleteOrgsFile, includeOrgsStr string) (deleteOrgs, includeOrgs map[int]struct{}) {
@@ -312,8 +218,6 @@ func setupOrgs(deleteOrgsFile, includeOrgsStr string) (deleteOrgs, includeOrgs m
 	}
 	return
 }
-
-/* TODO: delete v8 schema rows for all instances */
 
 type summary struct {
 	// Map from instance to (metric->count)
@@ -420,11 +324,12 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			continue
 		}
 
-		newChunk, extras, err := dedupe(h.readStore, orgStr, seriesID, from, through)
+		chunks, err := fetchChunks(h.readStore, orgStr, seriesID, from, through)
 		if err != nil {
-			level.Error(util.Logger).Log("msg", "chunk dedupe error", "err", err)
+			level.Error(util.Logger).Log("msg", "chunk fetch error", "err", err)
 			continue
 		}
+		newChunk := chunks[0]
 		metricName := newChunk.Metric.Get(labels.MetricName)
 		switch {
 		case isBogus(org, newChunk.Metric):
@@ -436,15 +341,13 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			if h.writeStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
 				continue
 			}
-			h.putWithRetry(ctx, newChunk)
+			err := dedupeAndStore(chunks, x, from, through)
+			if err != nil {
+				level.Error(util.Logger).Log("msg", "chunk store error", "err", err)
+				continue
+			}
 			chunksPerUser.WithLabelValues(orgStr).Inc()
 			h.counts[org][metricName]++
-
-			// Copy through all chunks that span into next table, for when we stop re-indexing
-			for _, c := range extras {
-				h.putNoIndexWithRetry(ctx, c)
-				h.counts[org][metricName]++
-			}
 		}
 		// This cache write may duplicate what the store did, but we can't
 		// guarantee it's v9+, and don't know we have the same series IDs as it has
@@ -512,25 +415,30 @@ func decodeDayNumber(day string) (model.Time, model.Time, error) {
 	return from, through, nil
 }
 
-func dedupeAndStore(db *tsdb.TSDB, userID, seriesID string, from, through model.Time) error {
+func fetchChunks(dstore chunk.Store2, userID, seriesID string, from, through model.Time) ([]chunk.Chunk, error) {
 	// FIXME: this shouldn't really be necessary, but store query APIs rely on it
 	ctx := user.InjectOrgID(context.Background(), userID)
 	chunks, err := dstore.AllChunksForSeries(ctx, userID, seriesID, from, through)
 	if err != nil {
-		return nil, nil, err
+		return nil, err
 	}
 	if len(chunks) == 0 {
-		return nil, nil, fmt.Errorf("no chunks found for %s:%s for %v-%v", userID, seriesID, from, through)
+		return nil, fmt.Errorf("no chunks found for %s:%s for %v-%v", userID, seriesID, from, through)
 	}
+	return chunks, nil
+}
 
-	// unpack and dedupe all samples from previous chunks; store in TSDB
+// unpack and dedupe all samples from previous chunks; store in TSDB
+func dedupeAndStore(chunks []chunk.Chunk, db *tsdb.DB, from, through model.Time) error {
+	app := db.Appender()
+
 	iter := batch.NewChunkMergeIterator(chunks, 0, 0)
 	if !iter.Seek(int64(from)) {
-		err = fmt.Errorf("Could not seek to start time")
-		return
+		return fmt.Errorf("Could not seek to start time")
 	}
-	labels = chunks[0].Metric
+	labels := chunks[0].Metric
 	var ref uint64
+	var err error
 	for {
 		ts, v := iter.At()
 		if ts > int64(through) {
@@ -538,15 +446,15 @@ func dedupeAndStore(db *tsdb.TSDB, userID, seriesID string, from, through model.
 		}
 		if ref != 0 {
 			// Try using reference from previous Add()
-			err = db.AddFast(ref, ts, v)
+			err = app.AddFast(ref, ts, v)
 			if err == nil {
 				goto next
-			} else if errors.Cause(err) != storage.ErrNotFound {
+			} else if errors.Cause(err) != promStorage.ErrNotFound {
 				return err
 			}
 		}
 		// Either we didn't have a reference, or we had one and it was rejected
-		ref, err = db.Add(labels, ts, v)
+		ref, err = app.Add(labels, ts, v)
 		if err != nil {
 			return err
 		}
@@ -555,7 +463,7 @@ func dedupeAndStore(db *tsdb.TSDB, userID, seriesID string, from, through model.
 			break
 		}
 	}
-	return
+	return nil
 }
 
 func isBogus(org int, lbls labels.Labels) bool {
