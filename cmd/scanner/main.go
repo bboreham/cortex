@@ -10,6 +10,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/pkg/errors"
@@ -20,6 +21,7 @@ import (
 	"github.com/prometheus/prometheus/pkg/labels"
 	promStorage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
+	"github.com/thanos-io/thanos/pkg/objstore"
 
 	"github.com/go-kit/kit/log/level"
 	"github.com/weaveworks/common/logging"
@@ -29,6 +31,7 @@ import (
 	"github.com/cortexproject/cortex/pkg/chunk/encoding"
 	"github.com/cortexproject/cortex/pkg/chunk/storage"
 	"github.com/cortexproject/cortex/pkg/querier/batch"
+	cortex_tsdb "github.com/cortexproject/cortex/pkg/storage/tsdb"
 	"github.com/cortexproject/cortex/pkg/util"
 	"github.com/cortexproject/cortex/pkg/util/flagext"
 	"github.com/cortexproject/cortex/pkg/util/validation"
@@ -56,7 +59,7 @@ var (
 func main() {
 	var (
 		schemaConfig     chunk.SchemaConfig
-		rechunkConfig    chunk.SchemaConfig
+		tsdbConfig       cortex_tsdb.Config
 		storageConfig    storage.Config
 		chunkStoreConfig chunk.StoreConfig
 		encodingConfig   encoding.Config
@@ -77,6 +80,7 @@ func main() {
 	)
 
 	flagext.RegisterFlags(&storageConfig, &schemaConfig, &chunkStoreConfig, &encodingConfig, &tbmConfig, &limitsConfig)
+	flagext.RegisterFlags(&tsdbConfig)
 	flag.StringVar(&address, "address", ":6060", "Address to listen on, for profiling, etc.")
 	flag.Int64Var(&week, "week", 0, "Week number to scan, e.g. 2497 (0 means current week)")
 	flag.Int64Var(&chunkReadCapacity, "chunk-read-provision", 1000, "DynamoDB read provision for chunk table")
@@ -135,11 +139,13 @@ func main() {
 	prevIndexReadCapacity, err := setReadCapacity(context.Background(), readClient, indexTableName, indexReadCapacity)
 	checkFatal(err)
 
+	scanner, err := newScanner(tsdbConfig, prometheus.DefaultRegisterer)
+	checkFatal(err)
 	handlers := make([]handler, segments)
 	callbacks := make([]func(result chunk.ReadBatch), segments)
 	for segment := 0; segment < segments; segment++ {
 		// This only works for series-store, i.e. schema v9 and v10
-		handlers[segment] = newHandler(chunkStore.(chunk.Store2), reindexStore.(chunk.Store2), indexTableName, includeOrgs, deleteOrgs)
+		handlers[segment] = newHandler(chunkStore.(chunk.Store2), scanner, indexTableName, includeOrgs, deleteOrgs)
 		callbacks[segment] = handlers[segment].handlePage
 	}
 
@@ -147,22 +153,13 @@ func main() {
 	checkFatal(err)
 
 	level.Info(util.Logger).Log("msg", "finished, shutting down")
-	if reindexStore != nil {
-		reindexStore.Stop()
-	}
+	// TODO: ship blocks to S3
+
 	// Set back as it was before
 	_, err = setReadCapacity(context.Background(), readClient, tableName, prevReadCapacity)
 	checkFatal(err)
 	_, err = setReadCapacity(context.Background(), readClient, indexTableName, prevIndexReadCapacity)
 	checkFatal(err)
-	if tm != nil {
-		tm.Stop()
-		// Sync tables as-at two weeks after, which should set them to inactive throughput
-		err = tm.SyncTables(context.Background(), tableTime.Time().Add(2*7*24*time.Hour), tableTime.Time())
-		if err != nil {
-			level.Error(util.Logger).Log("msg", "error syncing tables", "err", err)
-		}
-	}
 
 	totals := newSummary()
 	for segment := 0; segment < segments; segment++ {
@@ -253,9 +250,177 @@ func (s summary) print(deleteOrgs map[int]struct{}) {
 	}
 }
 
+type Shipper interface {
+	Sync(ctx context.Context) (uploaded int, err error)
+}
+
+type userTSDB struct {
+	*tsdb.DB
+}
+
+// TSDBState holds data structures used by the TSDB storage engine
+type TSDBState struct {
+	dbs    map[string]*userTSDB // tsdb sharded by userID
+	bucket objstore.Bucket
+
+	// Keeps count of in-flight requests
+	inflightWriteReqs sync.WaitGroup
+
+	// Head compactions metrics.
+	compactionsTriggered   prometheus.Counter
+	compactionsFailed      prometheus.Counter
+	walReplayTime          prometheus.Histogram
+	appenderAddDuration    prometheus.Histogram
+	appenderCommitDuration prometheus.Histogram
+}
+
+type scanner struct {
+	sync.RWMutex
+
+	cfg struct {
+		TSDBConfig cortex_tsdb.Config
+	}
+	TSDBState
+}
+
+func newScanner(cfg cortex_tsdb.Config, registerer prometheus.Registerer) (*scanner, error) {
+	bucketClient, err := cortex_tsdb.NewBucketClient(context.Background(), cfg, "scanner", util.Logger, registerer)
+	if err != nil {
+		return nil, err
+	}
+	return &scanner{
+		TSDBState: TSDBState{
+			dbs:    make(map[string]*userTSDB),
+			bucket: bucketClient,
+
+			compactionsTriggered: promauto.With(registerer).NewCounter(prometheus.CounterOpts{
+				Name: "cortex_ingester_tsdb_compactions_triggered_total",
+				Help: "Total number of triggered compactions.",
+			}),
+
+			compactionsFailed: promauto.With(registerer).NewCounter(prometheus.CounterOpts{
+				Name: "cortex_ingester_tsdb_compactions_failed_total",
+				Help: "Total number of compactions that failed.",
+			}),
+			walReplayTime: promauto.With(registerer).NewHistogram(prometheus.HistogramOpts{
+				Name:    "cortex_ingester_tsdb_wal_replay_duration_seconds",
+				Help:    "The total time it takes to open and replay a TSDB WAL.",
+				Buckets: prometheus.DefBuckets,
+			}),
+			appenderAddDuration: promauto.With(registerer).NewHistogram(prometheus.HistogramOpts{
+				Name:    "cortex_ingester_tsdb_appender_add_duration_seconds",
+				Help:    "The total time it takes for a push request to add samples to the TSDB appender.",
+				Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+			}),
+			appenderCommitDuration: promauto.With(registerer).NewHistogram(prometheus.HistogramOpts{
+				Name:    "cortex_ingester_tsdb_appender_commit_duration_seconds",
+				Help:    "The total time it takes for a push request to commit samples appended to TSDB.",
+				Buckets: []float64{.001, .005, .01, .025, .05, .1, .25, .5, 1, 2.5, 5, 10},
+			}),
+		},
+	}, nil
+}
+
+func (i *scanner) getOrCreateTSDB(userID string, force bool) (*userTSDB, error) {
+	db := i.getTSDB(userID)
+	if db != nil {
+		return db, nil
+	}
+
+	i.Lock()
+	defer i.Unlock()
+
+	// Check again for DB in the event it was created in-between locks
+	var ok bool
+	db, ok = i.TSDBState.dbs[userID]
+	if ok {
+		return db, nil
+	}
+
+	// Create the database and a shipper for a user
+	db, err := i.createTSDB(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	// Add the db to list of user databases
+	i.TSDBState.dbs[userID] = db
+
+	return db, nil
+}
+
+func (i *scanner) getTSDB(userID string) *userTSDB {
+	i.RLock()
+	defer i.RUnlock()
+	db := i.TSDBState.dbs[userID]
+	return db
+}
+
+// createTSDB creates a TSDB for a given userID, and returns the created db.
+func (i *scanner) createTSDB(userID string) (*userTSDB, error) {
+	tsdbPromReg := prometheus.NewRegistry()
+	udir := i.cfg.TSDBConfig.BlocksDir(userID)
+	userLogger := util.WithUserID(userID, util.Logger)
+
+	blockRanges := i.cfg.TSDBConfig.BlockRanges.ToMilliseconds()
+
+	// Create a new user database
+	db, err := tsdb.Open(udir, userLogger, tsdbPromReg, &tsdb.Options{
+		RetentionDuration: i.cfg.TSDBConfig.Retention.Milliseconds(),
+		MinBlockDuration:  blockRanges[0],
+		MaxBlockDuration:  blockRanges[len(blockRanges)-1],
+		NoLockfile:        true,
+		StripeSize:        i.cfg.TSDBConfig.StripeSize,
+		WALCompression:    i.cfg.TSDBConfig.WALCompressionEnabled,
+	})
+	if err != nil {
+		return nil, err
+	}
+	db.DisableCompactions() // we will compact on our own schedule
+
+	userDB := &userTSDB{
+		DB: db,
+	}
+
+	return userDB, nil
+}
+
+func (i *scanner) closeAllTSDB() {
+	i.Lock()
+
+	wg := &sync.WaitGroup{}
+	wg.Add(len(i.TSDBState.dbs))
+
+	// Concurrently close all users TSDB
+	for userID, userDB := range i.TSDBState.dbs {
+		userID := userID
+
+		go func(db *userTSDB) {
+			defer wg.Done()
+
+			if err := db.Close(); err != nil {
+				level.Warn(util.Logger).Log("msg", "unable to close TSDB", "err", err, "user", userID)
+				return
+			}
+
+			// Now that the TSDB has been closed, we should remove it from the
+			// set of open ones. This lock acquisition doesn't deadlock with the
+			// outer one, because the outer one is released as soon as all go
+			// routines are started.
+			i.Lock()
+			delete(i.TSDBState.dbs, userID)
+			i.Unlock()
+		}(userDB)
+	}
+
+	// Wait until all Close() completed
+	i.Unlock()
+	wg.Wait()
+}
+
 type handler struct {
 	readStore   chunk.Store2
-	writeStore  chunk.Store2
+	scanner     *scanner
 	tableName   string
 	pages       int
 	includeOrgs map[int]struct{}
@@ -263,13 +428,13 @@ type handler struct {
 	summary
 }
 
-func newHandler(readStore, writeStore chunk.Store2, tableName string, includeOrgs map[int]struct{}, deleteOrgs map[int]struct{}) handler {
+func newHandler(readStore chunk.Store2, scanner *scanner, tableName string, includeOrgs map[int]struct{}, deleteOrgs map[int]struct{}) handler {
 	if len(includeOrgs) == 0 {
 		includeOrgs = nil
 	}
 	return handler{
 		readStore:   readStore,
-		writeStore:  writeStore,
+		scanner:     scanner,
 		tableName:   tableName,
 		includeOrgs: includeOrgs,
 		deleteOrgs:  deleteOrgs,
@@ -286,8 +451,6 @@ type ReadBatchHashIterator interface {
 }
 
 func (h *handler) handlePage(page chunk.ReadBatch) {
-	ctx := context.Background()
-
 	if hourLimitStart != 0 && hourLimitEnd != 0 {
 		for {
 			hourNow := time.Now().Hour()
@@ -320,9 +483,16 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		if _, found := h.deleteOrgs[org]; found {
 			continue
 		}
-		if h.writeStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
+		if h.readStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
 			continue
 		}
+
+		/*
+			ideas:
+			 fetch a whole week's data at a time for one timeseries
+			 split blocks by size, e.g. when it reaches 2GB, start a new block and ship the old
+
+		*/
 
 		chunks, err := fetchChunks(h.readStore, orgStr, seriesID, from, through)
 		if err != nil {
@@ -338,10 +508,12 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			h.counts[org][metricName+"-bogus-tiny"]++
 		default:
 			// Check again in case another thread completed this one while we were reading
-			if h.writeStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
+			if h.readStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
 				continue
 			}
-			err := dedupeAndStore(chunks, x, from, through)
+			// TODO: run a query on TSDB to see if we have this series already
+			userDB := h.scanner.getTSDB(orgStr)
+			err := dedupeAndStore(chunks, userDB.DB, from, through)
 			if err != nil {
 				level.Error(util.Logger).Log("msg", "chunk store error", "err", err)
 				continue
@@ -351,29 +523,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		}
 		// This cache write may duplicate what the store did, but we can't
 		// guarantee it's v9+, and don't know we have the same series IDs as it has
-		h.writeStore.MarkThisSeriesDone(context.TODO(), from, through, orgStr, seriesID)
-	}
-}
-
-func (h *handler) putWithRetry(ctx context.Context, newChunk *chunk.Chunk) {
-	for {
-		err := h.writeStore.Put(ctx, []chunk.Chunk{*newChunk})
-		if err != nil {
-			level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
-			continue
-		}
-		break
-	}
-}
-
-func (h *handler) putNoIndexWithRetry(ctx context.Context, chunk chunk.Chunk) {
-	for {
-		err := h.writeStore.PutNoIndex(ctx, chunk)
-		if err != nil {
-			level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
-			continue
-		}
-		break
+		h.readStore.MarkThisSeriesDone(context.TODO(), from, through, orgStr, seriesID)
 	}
 }
 
