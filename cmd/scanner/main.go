@@ -451,6 +451,8 @@ type ReadBatchHashIterator interface {
 }
 
 func (h *handler) handlePage(page chunk.ReadBatch) {
+	ctx := context.Background()
+
 	if hourLimitStart != 0 && hourLimitEnd != 0 {
 		for {
 			hourNow := time.Now().Hour()
@@ -483,7 +485,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		if _, found := h.deleteOrgs[org]; found {
 			continue
 		}
-		if h.readStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
+		if h.readStore.DoneThisSeriesBefore(ctx, from, through, orgStr, seriesID) {
 			continue
 		}
 
@@ -508,7 +510,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			h.counts[org][metricName+"-bogus-tiny"]++
 		default:
 			// Check again in case another thread completed this one while we were reading
-			if h.readStore.DoneThisSeriesBefore(from, through, orgStr, seriesID) {
+			if h.readStore.DoneThisSeriesBefore(ctx, from, through, orgStr, seriesID) {
 				continue
 			}
 			// TODO: run a query on TSDB to see if we have this series already
