@@ -254,7 +254,15 @@ func (c *seriesStore) lookupLabelNamesByChunks(ctx context.Context, from, throug
 	return labelNamesFromChunks(allChunks), nil
 }
 
-func (c *seriesStore) DoneThisSeriesBefore(from, through model.Time, userID, seriesID string) bool {
+func (c *seriesStore) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error {
+	return c.index.(Store2).Scan(ctx, from, through, withValue, callbacks)
+}
+
+func (c *seriesStore) PutNoIndex(ctx context.Context, chunk Chunk) error {
+	return c.chunks.PutChunks(ctx, []Chunk{chunk})
+}
+
+func (c *seriesStore) DoneThisSeriesBefore(ctx context.Context, from, through model.Time, userID, seriesID string) bool {
 	keys := c.schema.GetLabelEntryCacheKeys2(from, through, userID, seriesID)
 	_, _, missing := c.writeDedupeCache.Fetch(context.Background(), keys)
 	return len(missing) == 0

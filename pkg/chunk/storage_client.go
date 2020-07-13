@@ -5,8 +5,6 @@ import (
 	"errors"
 	"io"
 	"time"
-
-	"github.com/prometheus/common/model"
 )
 
 // DirDelim is the delimiter used to model a directory structure in an object store.
@@ -43,12 +41,6 @@ type Client interface {
 // ObjectAndIndexClient allows optimisations where the same client handles both
 type ObjectAndIndexClient interface {
 	PutChunkAndIndex(ctx context.Context, c Chunk, index WriteBatch) error
-}
-
-// ObjectClient2 because naming is hard
-type ObjectClient2 interface {
-	ObjectClient
-	Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error
 }
 
 // WriteBatch represents a batch of writes.

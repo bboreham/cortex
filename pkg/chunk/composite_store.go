@@ -46,7 +46,7 @@ type Store2 interface {
 	Store
 	Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error
 	PutNoIndex(ctx context.Context, chunk Chunk) error
-	DoneThisSeriesBefore(from, through model.Time, userID, seriesID string) bool
+	DoneThisSeriesBefore(ctx context.Context, from, through model.Time, userID, seriesID string) bool
 	MarkThisSeriesDone(ctx context.Context, from, through model.Time, userID, seriesID string)
 	AllChunksForSeries(ctx context.Context, userID, seriesID string, from, through model.Time) ([]Chunk, error)
 }
@@ -138,7 +138,7 @@ func (c compositeStore) PutNoIndex(ctx context.Context, chunk Chunk) error {
 func (c compositeStore) DoneThisSeriesBefore(ctx context.Context, from, through model.Time, userID, seriesID string) bool {
 	doneBefore := false
 	c.forStores(ctx, userID, from, through, func(innerCtx context.Context, from, through model.Time, store Store) error {
-		doneBefore = doneBefore || store.(Store2).DoneThisSeriesBefore(from, through, userID, seriesID)
+		doneBefore = doneBefore || store.(Store2).DoneThisSeriesBefore(ctx, from, through, userID, seriesID)
 		return nil
 	})
 	return doneBefore
