@@ -254,10 +254,6 @@ func (c *seriesStore) lookupLabelNamesByChunks(ctx context.Context, from, throug
 	return labelNamesFromChunks(allChunks), nil
 }
 
-func (c *seriesStore) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error {
-	return c.index.(Store2).Scan(ctx, from, through, withValue, callbacks)
-}
-
 func (c *seriesStore) PutNoIndex(ctx context.Context, chunk Chunk) error {
 	return c.chunks.PutChunks(ctx, []Chunk{chunk})
 }

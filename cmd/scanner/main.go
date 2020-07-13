@@ -149,7 +149,10 @@ func main() {
 		callbacks[segment] = handlers[segment].handlePage
 	}
 
-	err = chunkStore.(chunk.Store2).Scan(context.Background(), tableTime, tableTime, false, callbacks)
+	type tableScanner interface {
+		Scan(ctx context.Context, tableName string, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error
+	}
+	err = readClient.(tableScanner).Scan(context.Background(), indexTableName, tableTime, tableTime, false, callbacks)
 	checkFatal(err)
 
 	level.Info(util.Logger).Log("msg", "finished, shutting down")

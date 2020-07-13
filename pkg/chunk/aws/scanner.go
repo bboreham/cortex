@@ -17,11 +17,7 @@ import (
 // ScanTable reads the whole of a table on multiple goroutines in
 // parallel, calling back with batches of results on one of the
 // callbacks for each goroutine.
-func (a dynamoDBStorageClient) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error {
-	tableName, err := a.schemaCfg.IndexTableFor(from) // FIXME ignoring 'through'
-	if err != nil {
-		return err
-	}
+func (a dynamoTableClient) Scan(ctx context.Context, tableName string, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error {
 	var outerErr error
 	projection := hashKey + "," + rangeKey
 	if withValue {
@@ -39,7 +35,7 @@ func (a dynamoDBStorageClient) Scan(ctx context.Context, from, through model.Tim
 				ReturnConsumedCapacity: aws.String(dynamodb.ReturnConsumedCapacityTotal),
 			}
 			withRetrys := func(req *request.Request) {
-				req.Retryer = client.DefaultRetryer{NumMaxRetries: a.cfg.backoffConfig.MaxRetries}
+				req.Retryer = client.DefaultRetryer{NumMaxRetries: a.callManager.backoffConfig.MaxRetries}
 			}
 			err := a.DynamoDB.ScanPagesWithContext(ctx, input, func(page *dynamodb.ScanOutput, lastPage bool) bool {
 				if cc := page.ConsumedCapacity; cc != nil {

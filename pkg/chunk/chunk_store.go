@@ -216,10 +216,6 @@ func (c *store) GetChunkRefs(ctx context.Context, userID string, from, through m
 	return nil, nil, errors.New("not implemented")
 }
 
-func (c *store) Scan(ctx context.Context, from, through model.Time, withValue bool, callbacks []func(result ReadBatch)) error {
-	return c.chunks.(ObjectClient2).Scan(ctx, from, through, withValue, callbacks)
-}
-
 func (c *store) PutNoIndex(ctx context.Context, chunk Chunk) error {
 	return c.chunks.PutChunks(ctx, []Chunk{chunk})
 }
