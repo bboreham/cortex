@@ -114,8 +114,9 @@ func main() {
 	if week == 0 {
 		week = time.Now().Unix() / secondsInWeek
 	}
-	tableTime := model.TimeFromUnix(week * secondsInWeek)
-	endOfWeek = tableTime.Add(7 * 24 * time.Hour)
+	startOfWeek := model.TimeFromUnix(week * secondsInWeek)
+	// Time intervals are inclusive, so step back one millisecond from the next day
+	endOfWeek = startOfWeek.Add(7*24*time.Hour - 1*time.Millisecond)
 
 	err := schemaConfig.Load()
 	checkFatal(err)
@@ -126,10 +127,10 @@ func main() {
 	checkFatal(err)
 	defer chunkStore.Stop()
 
-	tableName, err := schemaConfig.ChunkTableFor(tableTime)
+	tableName, err := schemaConfig.ChunkTableFor(startOfWeek)
 	checkFatal(err)
 	fmt.Printf("table %s\n", tableName)
-	indexTableName, err := schemaConfig.IndexTableFor(tableTime)
+	indexTableName, err := schemaConfig.IndexTableFor(startOfWeek)
 	checkFatal(err)
 
 	readClient, err := storage.NewTableClient("aws", storageConfig)
@@ -145,14 +146,14 @@ func main() {
 	callbacks := make([]func(result chunk.ReadBatch), segments)
 	for segment := 0; segment < segments; segment++ {
 		// This only works for series-store, i.e. schema v9 and v10
-		handlers[segment] = newHandler(chunkStore.(chunk.Store2), scanner, indexTableName, includeOrgs, deleteOrgs)
+		handlers[segment] = newHandler(chunkStore.(chunk.Store2), scanner, indexTableName, startOfWeek, endOfWeek, includeOrgs, deleteOrgs)
 		callbacks[segment] = handlers[segment].handlePage
 	}
 
 	type tableScanner interface {
 		Scan(ctx context.Context, tableName string, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error
 	}
-	err = readClient.(tableScanner).Scan(context.Background(), indexTableName, tableTime, tableTime, false, callbacks)
+	err = readClient.(tableScanner).Scan(context.Background(), indexTableName, startOfWeek, endOfWeek, false, callbacks)
 	checkFatal(err)
 
 	level.Info(util.Logger).Log("msg", "finished, shutting down")
@@ -424,13 +425,15 @@ type handler struct {
 	readStore   chunk.Store2
 	scanner     *scanner
 	tableName   string
+	from        model.Time
+	through     model.Time
 	pages       int
 	includeOrgs map[int]struct{}
 	deleteOrgs  map[int]struct{}
 	summary
 }
 
-func newHandler(readStore chunk.Store2, scanner *scanner, tableName string, includeOrgs map[int]struct{}, deleteOrgs map[int]struct{}) handler {
+func newHandler(readStore chunk.Store2, scanner *scanner, tableName string, from, through model.Time, includeOrgs map[int]struct{}, deleteOrgs map[int]struct{}) handler {
 	if len(includeOrgs) == 0 {
 		includeOrgs = nil
 	}
@@ -438,6 +441,8 @@ func newHandler(readStore chunk.Store2, scanner *scanner, tableName string, incl
 		readStore:   readStore,
 		scanner:     scanner,
 		tableName:   tableName,
+		from:        from,
+		through:     through,
 		includeOrgs: includeOrgs,
 		deleteOrgs:  deleteOrgs,
 		summary:     newSummary(),
@@ -470,7 +475,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		if !isRecognisedRecord(i.RangeValue()) {
 			continue
 		}
-		org, orgStr, seriesID, dayNumber, err := decodeHashValue(i.HashValue())
+		org, orgStr, seriesID, _, err := decodeHashValue(i.HashValue())
 		if err != nil {
 			level.Error(util.Logger).Log("msg", "error in hash value", "hash", i.HashValue())
 			continue
@@ -487,18 +492,13 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		if _, found := h.deleteOrgs[org]; found {
 			continue
 		}
-		from, through, err := dayBoundsForDayNumber(dayNumber)
-		if err != nil {
-			level.Error(util.Logger).Log("msg", "error in hash value day number", "dayNumber", dayNumber)
-			continue
-		}
+		from, through := h.from, h.through
 		if h.readStore.DoneThisSeriesBefore(ctx, from, through, orgStr, seriesID) {
 			continue
 		}
 
 		/*
 			ideas:
-			 fetch a whole week's data at a time for one timeseries
 			 split blocks by size, e.g. when it reaches 2GB, start a new block and ship the old
 
 		*/
@@ -557,22 +557,6 @@ func decodeHashValue(hashValue string) (org int, orgStr, seriesID string, dayNum
 	}
 	dayNumber = hashParts[1]
 	return
-}
-
-func dayBoundsForDayNumber(day string) (model.Time, model.Time, error) {
-	if len(day) < 2 || day[0] != 'd' {
-		return 0, 0, fmt.Errorf("invalid number: %q", day)
-	}
-	dayNumber, err := strconv.Atoi(day[1:])
-	if err != nil {
-		return 0, 0, err
-	}
-	const millisecondsInDay = model.Time(24 * time.Hour / time.Millisecond)
-	// Fetch the whole day that this date is in
-	from := model.Time(dayNumber) * millisecondsInDay
-	// Time intervals are inclusive, so step back one millisecond from the next day
-	through := from + millisecondsInDay - 1
-	return from, through, nil
 }
 
 func fetchChunks(dstore chunk.Store2, userID, seriesID string, from, through model.Time) ([]chunk.Chunk, error) {
