@@ -534,12 +534,9 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			if h.readStore.DoneThisSeriesBefore(ctx, from, through, orgStr, seriesID) {
 				continue
 			}
-			// TODO: run a query on TSDB to see if we have this series already
-			userDB, err := h.scanner.getOrCreateTSDB(orgStr)
-			checkFatal(err)
-			err = dedupeAndStore(chunks, userDB.DB, from, through)
+			err = h.scanner.dedupeAndStore(orgStr, chunks, from, through)
 			if err != nil {
-				level.Error(util.Logger).Log("msg", "chunk store error", "err", err)
+				level.Error(util.Logger).Log("msg", "block store error", "err", err)
 				continue
 			}
 			chunksPerUser.WithLabelValues(orgStr).Inc()
@@ -587,8 +584,11 @@ func fetchChunks(dstore chunk.Store2, userID, seriesID string, from, through mod
 }
 
 // unpack and dedupe all samples from previous chunks; store in TSDB
-func dedupeAndStore(chunks []chunk.Chunk, db *tsdb.DB, from, through model.Time) error {
-	app := db.Appender()
+func (i *scanner) dedupeAndStore(orgStr string, chunks []chunk.Chunk, from, through model.Time) error {
+	// TODO: run a query on TSDB to see if we have this series already
+	userDB, err := i.getOrCreateTSDB(orgStr)
+	checkFatal(err)
+	app := userDB.DB.Appender()
 
 	iter := batch.NewChunkMergeIterator(chunks, 0, 0)
 	if !iter.Seek(int64(from)) {
@@ -596,7 +596,6 @@ func dedupeAndStore(chunks []chunk.Chunk, db *tsdb.DB, from, through model.Time)
 	}
 	labels := chunks[0].Metric
 	var ref uint64
-	var err error
 	for {
 		ts, v := iter.At()
 		if ts > int64(through) {
