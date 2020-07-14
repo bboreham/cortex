@@ -534,9 +534,10 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			if h.readStore.DoneThisSeriesBefore(ctx, from, through, orgStr, seriesID) {
 				continue
 			}
+			level.Debug(util.Logger).Log("msg", "storing series", "seriesID", seriesID)
 			err = h.scanner.dedupeAndStore(orgStr, chunks, from, through)
 			if err != nil {
-				level.Error(util.Logger).Log("msg", "block store error", "err", err)
+				level.Error(util.Logger).Log("msg", "block store error", "org", orgStr, "seriesID", seriesID, "err", err)
 				continue
 			}
 			chunksPerUser.WithLabelValues(orgStr).Inc()
