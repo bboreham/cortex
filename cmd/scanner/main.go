@@ -470,7 +470,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		if !isRecognisedRecord(i.RangeValue()) {
 			continue
 		}
-		org, orgStr, seriesID, from, through, err := decodeHashValue(i.HashValue())
+		org, orgStr, seriesID, dayNumber, err := decodeHashValue(i.HashValue())
 		if err != nil {
 			level.Error(util.Logger).Log("msg", "error in hash value", "hash", i.HashValue())
 			continue
@@ -485,6 +485,11 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		}
 		h.counts[org][""]++
 		if _, found := h.deleteOrgs[org]; found {
+			continue
+		}
+		from, through, err := dayBoundsForDayNumber(dayNumber)
+		if err != nil {
+			level.Error(util.Logger).Log("msg", "error in hash value day number", "dayNumber", dayNumber)
 			continue
 		}
 		if h.readStore.DoneThisSeriesBefore(ctx, from, through, orgStr, seriesID) {
@@ -537,7 +542,7 @@ func isRecognisedRecord(rangeValue []byte) bool {
 	return len(rangeValue) > 2 && rangeValue[len(rangeValue)-2] == chunkTimeRangeKeyV3
 }
 
-func decodeHashValue(hashValue string) (org int, orgStr, seriesID string, from, through model.Time, err error) {
+func decodeHashValue(hashValue string) (org int, orgStr, seriesID string, dayNumber string, err error) {
 	hashParts := strings.SplitN(hashValue, ":", 3)
 	if len(hashParts) != 3 {
 		err = fmt.Errorf("unrecognized hash value: %q", hashValue)
@@ -550,11 +555,11 @@ func decodeHashValue(hashValue string) (org int, orgStr, seriesID string, from, 
 		err = fmt.Errorf("unrecognized org string: %s", err)
 		return
 	}
-	from, through, err = decodeDayNumber(hashParts[1])
+	dayNumber = hashParts[1]
 	return
 }
 
-func decodeDayNumber(day string) (model.Time, model.Time, error) {
+func dayBoundsForDayNumber(day string) (model.Time, model.Time, error) {
 	if len(day) < 2 || day[0] != 'd' {
 		return 0, 0, fmt.Errorf("invalid number: %q", day)
 	}
