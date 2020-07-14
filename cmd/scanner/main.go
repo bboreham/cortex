@@ -108,6 +108,11 @@ func main() {
 	l.Set(loglevel)
 	util.Logger, _ = util.NewPrometheusLogger(l)
 
+	checkFatal(tsdbConfig.Validate())
+	if tsdbConfig.BlockRanges[0] < time.Hour*7*24*2 {
+		level.Warn(util.Logger).Log("msg", "tsdb block range should be twice the range of data being read")
+	}
+
 	// HTTP listener for profiling
 	go func() {
 		http.Handle("/metrics", promhttp.Handler())
