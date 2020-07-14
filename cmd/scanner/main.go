@@ -253,10 +253,6 @@ func (s summary) print(deleteOrgs map[int]struct{}) {
 	}
 }
 
-type Shipper interface {
-	Sync(ctx context.Context) (uploaded int, err error)
-}
-
 type userTSDB struct {
 	*tsdb.DB
 }
