@@ -292,6 +292,9 @@ func newScanner(cfg cortex_tsdb.Config, registerer prometheus.Registerer) (*scan
 		return nil, err
 	}
 	return &scanner{
+		cfg: struct{ TSDBConfig cortex_tsdb.Config }{
+			TSDBConfig: cfg,
+		},
 		TSDBState: TSDBState{
 			dbs:    make(map[string]*userTSDB),
 			bucket: bucketClient,
@@ -324,7 +327,7 @@ func newScanner(cfg cortex_tsdb.Config, registerer prometheus.Registerer) (*scan
 	}, nil
 }
 
-func (i *scanner) getOrCreateTSDB(userID string, force bool) (*userTSDB, error) {
+func (i *scanner) getOrCreateTSDB(userID string) (*userTSDB, error) {
 	db := i.getTSDB(userID)
 	if db != nil {
 		return db, nil
@@ -517,8 +520,9 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 				continue
 			}
 			// TODO: run a query on TSDB to see if we have this series already
-			userDB := h.scanner.getTSDB(orgStr)
-			err := dedupeAndStore(chunks, userDB.DB, from, through)
+			userDB, err := h.scanner.getOrCreateTSDB(orgStr)
+			checkFatal(err)
+			err = dedupeAndStore(chunks, userDB.DB, from, through)
 			if err != nil {
 				level.Error(util.Logger).Log("msg", "chunk store error", "err", err)
 				continue
