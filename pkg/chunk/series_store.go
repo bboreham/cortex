@@ -270,11 +270,14 @@ func (c *seriesStore) MarkThisSeriesDone(ctx context.Context, from, through mode
 	c.writeDedupeCache.Store(ctx, keys, bufs)
 }
 
-func (c *seriesStore) AllChunksForSeries(ctx context.Context, userID string, seriesID string, from, through model.Time) ([]Chunk, error) {
+func (c *seriesStore) AllChunksForSeries(ctx context.Context, userID string, seriesID string, from, through model.Time, filter func(labels.Labels) error) ([]Chunk, error) {
 	seriesIDs := []string{string(seriesID)}
 	chunkIDs, err := c.lookupChunksBySeries(ctx, from, through, userID, seriesIDs)
 	if err != nil {
 		return nil, err
+	}
+	if len(chunkIDs) == 0 { // quick return if there's no data
+		return nil, nil
 	}
 	chunks, err := c.convertChunkIDsToChunks(ctx, userID, chunkIDs)
 	if err != nil {
@@ -282,11 +285,22 @@ func (c *seriesStore) AllChunksForSeries(ctx context.Context, userID string, ser
 	}
 	keys := keysFromChunks(chunks)
 	chunksPerQuery.Observe(float64(len(chunks)))
-	allChunks, err := c.FetchChunks(ctx, chunks, keys)
+	// fetch just one chunk first, and run the filter
+	fetchedChunks, err := c.FetchChunks(ctx, chunks[:1], keys)
 	if err != nil {
 		return nil, err
 	}
-	return allChunks, nil
+	if err := filter(fetchedChunks[0].Metric); err != nil {
+		return nil, err
+	}
+	if len(chunks) > 1 {
+		remainingChunks, err := c.FetchChunks(ctx, chunks[1:], keys)
+		if err != nil {
+			return nil, err
+		}
+		fetchedChunks = append(fetchedChunks, remainingChunks...)
+	}
+	return fetchedChunks, nil
 }
 
 func (c *seriesStore) lookupSeriesByMetricNameMatchers(ctx context.Context, from, through model.Time, userID, metricName string, matchers []*labels.Matcher) ([]string, error) {

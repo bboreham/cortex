@@ -56,6 +56,12 @@ var (
 	hourLimitEnd              int
 )
 
+type errBogusChunk struct {
+	metricName string
+}
+
+func (e errBogusChunk) Error() string { return fmt.Sprintf("bogus chunk: %s", e.metricName) }
+
 func main() {
 	var (
 		schemaConfig     chunk.SchemaConfig
@@ -503,16 +509,24 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 
 		*/
 
-		chunks, err := fetchChunks(h.readStore, orgStr, seriesID, from, through)
+		chunks, err := fetchChunks(h.readStore, orgStr, seriesID, from, through, func(lbls labels.Labels) error {
+			if isBogus(org, lbls) {
+				return errBogusChunk{metricName: lbls.Get(labels.MetricName)}
+			}
+			return nil
+		})
 		if err != nil {
+			if eb, found := err.(errBogusChunk); found {
+				h.counts[org][eb.metricName+"-bogus"]++
+				h.readStore.MarkThisSeriesDone(context.TODO(), from, through, orgStr, seriesID)
+				continue
+			}
 			level.Error(util.Logger).Log("msg", "chunk fetch error", "err", err)
 			continue
 		}
 		newChunk := chunks[0]
 		metricName := newChunk.Metric.Get(labels.MetricName)
 		switch {
-		case isBogus(org, newChunk.Metric):
-			h.counts[org][metricName+"-bogus"]++
 		case newChunk.Data.Len() < minChunkLength:
 			h.counts[org][metricName+"-bogus-tiny"]++
 		default:
@@ -559,10 +573,10 @@ func decodeHashValue(hashValue string) (org int, orgStr, seriesID string, dayNum
 	return
 }
 
-func fetchChunks(dstore chunk.Store2, userID, seriesID string, from, through model.Time) ([]chunk.Chunk, error) {
+func fetchChunks(dstore chunk.Store2, userID, seriesID string, from, through model.Time, filter func(labels.Labels) error) ([]chunk.Chunk, error) {
 	// FIXME: this shouldn't really be necessary, but store query APIs rely on it
 	ctx := user.InjectOrgID(context.Background(), userID)
-	chunks, err := dstore.AllChunksForSeries(ctx, userID, seriesID, from, through)
+	chunks, err := dstore.AllChunksForSeries(ctx, userID, seriesID, from, through, filter)
 	if err != nil {
 		return nil, err
 	}
