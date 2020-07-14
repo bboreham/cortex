@@ -609,13 +609,13 @@ func dedupeAndStore(chunks []chunk.Chunk, db *tsdb.DB, from, through model.Time)
 			if err == nil {
 				goto next
 			} else if errors.Cause(err) != promStorage.ErrNotFound {
-				return err
+				return errors.Wrapf(err, "adding %v %v", labels, ts)
 			}
 		}
 		// Either we didn't have a reference, or we had one and it was rejected
 		ref, err = app.Add(labels, ts, v)
 		if err != nil {
-			return err
+			return errors.Wrapf(err, "adding %v %v", labels, ts)
 		}
 	next:
 		if !iter.Next() {
