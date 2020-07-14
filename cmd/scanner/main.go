@@ -596,6 +596,7 @@ func (i *scanner) dedupeAndStore(orgStr string, chunks []chunk.Chunk, from, thro
 	}
 	labels := chunks[0].Metric
 	var ref uint64
+	startAppend := time.Now()
 	for {
 		ts, v := iter.At()
 		if ts > int64(through) {
@@ -620,6 +621,14 @@ func (i *scanner) dedupeAndStore(orgStr string, chunks []chunk.Chunk, from, thro
 			break
 		}
 	}
+	i.TSDBState.appenderAddDuration.Observe(time.Since(startAppend).Seconds())
+
+	startCommit := time.Now()
+	if err := app.Commit(); err != nil {
+		return err
+	}
+	i.TSDBState.appenderCommitDuration.Observe(time.Since(startCommit).Seconds())
+
 	return nil
 }
 
