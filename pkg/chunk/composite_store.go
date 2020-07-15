@@ -47,7 +47,7 @@ type Store2 interface {
 	PutNoIndex(ctx context.Context, chunk Chunk) error
 	DoneThisSeriesBefore(ctx context.Context, from, through model.Time, userID, seriesID string) bool
 	MarkThisSeriesDone(ctx context.Context, from, through model.Time, userID, seriesID string)
-	AllChunksForSeries(ctx context.Context, userID, seriesID string, from, through model.Time) ([]Chunk, error)
+	AllChunksForSeries(ctx context.Context, userID, seriesID string, from, through model.Time, filter func(labels.Labels) error) ([]Chunk, error)
 }
 
 // CompositeStore is a Store which delegates to various stores depending
@@ -144,10 +144,10 @@ func (c compositeStore) MarkThisSeriesDone(ctx context.Context, from, through mo
 	})
 }
 
-func (c compositeStore) AllChunksForSeries(ctx context.Context, userID, seriesID string, from, through model.Time) ([]Chunk, error) {
+func (c compositeStore) AllChunksForSeries(ctx context.Context, userID, seriesID string, from, through model.Time, filter func(labels.Labels) error) ([]Chunk, error) {
 	var ret []Chunk
 	err := c.forStores(ctx, userID, from, through, func(innerCtx context.Context, from, through model.Time, store Store) error {
-		chunks, err := store.(Store2).AllChunksForSeries(innerCtx, userID, seriesID, from, through)
+		chunks, err := store.(Store2).AllChunksForSeries(innerCtx, userID, seriesID, from, through, filter)
 		ret = append(ret, chunks...)
 		return err
 	})
