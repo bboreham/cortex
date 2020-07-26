@@ -21,7 +21,9 @@ import (
 	"github.com/prometheus/prometheus/pkg/labels"
 	promStorage "github.com/prometheus/prometheus/storage"
 	"github.com/prometheus/prometheus/tsdb"
+	"github.com/thanos-io/thanos/pkg/block/metadata"
 	"github.com/thanos-io/thanos/pkg/objstore"
+	"github.com/thanos-io/thanos/pkg/shipper"
 
 	"github.com/go-kit/kit/log/level"
 	"github.com/weaveworks/common/logging"
@@ -161,14 +163,24 @@ func main() {
 		callbacks[segment] = handlers[segment].handlePage
 	}
 
+	ctx, cancelFunc := context.WithCancel(context.Background())
+	defer cancelFunc()
+
+	go scanner.compactionLoop(ctx)
+
 	type tableScanner interface {
 		Scan(ctx context.Context, tableName string, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error
 	}
 	err = readClient.(tableScanner).Scan(context.Background(), indexTableName, startOfWeek, endOfWeek, false, callbacks)
 	checkFatal(err)
 
+	level.Info(util.Logger).Log("msg", "finished scan, compacting head")
+	scanner.compactHead(ctx)
+	level.Info(util.Logger).Log("msg", "shipping blocks")
+	scanner.shipBlocks(ctx)
+	level.Info(util.Logger).Log("msg", "closing all TSDBs")
+	scanner.closeAllTSDB()
 	level.Info(util.Logger).Log("msg", "finished, shutting down")
-	// TODO: ship blocks to S3
 
 	// Set back as it was before
 	_, err = setReadCapacity(context.Background(), readClient, tableName, prevReadCapacity)
@@ -265,8 +277,14 @@ func (s summary) print(deleteOrgs map[int]struct{}) {
 	}
 }
 
+// Shipper interface is used to have an easy way to mock it in tests.
+type Shipper interface {
+	Sync(ctx context.Context) (uploaded int, err error)
+}
+
 type userTSDB struct {
 	*tsdb.DB
+	shipper Shipper
 }
 
 // TSDBState holds data structures used by the TSDB storage engine
@@ -396,40 +414,115 @@ func (i *scanner) createTSDB(userID string) (*userTSDB, error) {
 		DB: db,
 	}
 
+	// Thanos shipper requires at least 1 external label to be set.
+	l := labels.Labels{
+		{
+			Name:  cortex_tsdb.TenantIDExternalLabel,
+			Value: userID,
+		},
+	}
+
+	// Create a new shipper for this database
+	userDB.shipper = shipper.New(
+		userLogger,
+		tsdbPromReg,
+		udir,
+		cortex_tsdb.NewUserBucketClient(userID, i.TSDBState.bucket),
+		func() labels.Labels { return l }, metadata.ReceiveSource)
+
 	return userDB, nil
+}
+
+func (i *scanner) compactionLoop(ctx context.Context) error {
+	ticker := time.NewTicker(i.cfg.TSDBConfig.HeadCompactionInterval)
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			i.compactBlocks(ctx)
+
+		case <-ctx.Done():
+			return nil
+		}
+	}
+}
+
+func (i *scanner) compactHead(ctx context.Context) {
+	for _, userID := range i.getTSDBUsers() {
+		level.Info(util.Logger).Log("msg", "TSDB blocks compaction starting", "user", userID)
+		userDB := i.getTSDB(userID)
+		h := userDB.Head()
+		err := userDB.CompactHead(tsdb.NewRangeHead(h, h.MinTime(), h.MaxTime()))
+		if err != nil {
+			i.TSDBState.compactionsFailed.Inc()
+			level.Warn(util.Logger).Log("msg", "TSDB head compaction for user has failed", "user", userID, "err", err)
+		} else {
+			level.Debug(util.Logger).Log("msg", "TSDB head compaction completed successfully", "user", userID)
+		}
+	}
+}
+
+func (i *scanner) compactBlocks(ctx context.Context) {
+	for _, userID := range i.getTSDBUsers() {
+		level.Info(util.Logger).Log("msg", "TSDB blocks compaction starting", "user", userID)
+		userDB := i.getTSDB(userID)
+		if userDB == nil {
+			continue
+		}
+
+		i.TSDBState.compactionsTriggered.Inc()
+		err := userDB.Compact()
+		if err != nil {
+			i.TSDBState.compactionsFailed.Inc()
+			level.Warn(util.Logger).Log("msg", "TSDB blocks compaction for user has failed", "user", userID, "err", err)
+		} else {
+			level.Debug(util.Logger).Log("msg", "TSDB blocks compaction completed successfully", "user", userID)
+		}
+	}
+}
+
+// List all users for which we have a TSDB. We do it here in order
+// to keep the mutex locked for the shortest time possible.
+func (i *scanner) getTSDBUsers() []string {
+	i.RLock()
+	defer i.RUnlock()
+
+	ids := make([]string, 0, len(i.TSDBState.dbs))
+	for userID := range i.TSDBState.dbs {
+		ids = append(ids, userID)
+	}
+
+	return ids
 }
 
 func (i *scanner) closeAllTSDB() {
 	i.Lock()
-
-	wg := &sync.WaitGroup{}
-	wg.Add(len(i.TSDBState.dbs))
-
-	// Concurrently close all users TSDB
 	for userID, userDB := range i.TSDBState.dbs {
-		userID := userID
-
-		go func(db *userTSDB) {
-			defer wg.Done()
-
-			if err := db.Close(); err != nil {
-				level.Warn(util.Logger).Log("msg", "unable to close TSDB", "err", err, "user", userID)
-				return
-			}
-
-			// Now that the TSDB has been closed, we should remove it from the
-			// set of open ones. This lock acquisition doesn't deadlock with the
-			// outer one, because the outer one is released as soon as all go
-			// routines are started.
-			i.Lock()
-			delete(i.TSDBState.dbs, userID)
-			i.Unlock()
-		}(userDB)
+		if err := userDB.Close(); err != nil {
+			level.Warn(util.Logger).Log("msg", "unable to close TSDB", "err", err, "user", userID)
+			return
+		}
+		delete(i.TSDBState.dbs, userID)
 	}
-
-	// Wait until all Close() completed
 	i.Unlock()
-	wg.Wait()
+}
+
+func (i *scanner) shipBlocks(ctx context.Context) {
+	for _, userID := range i.getTSDBUsers() {
+		level.Info(util.Logger).Log("msg", "TSDB shipping starting", "user", userID)
+		userDB := i.getTSDB(userID)
+		if userDB == nil || userDB.shipper == nil {
+			return
+		}
+
+		// Run the shipper's Sync() to upload unshipped blocks.
+		if uploaded, err := userDB.shipper.Sync(ctx); err != nil {
+			level.Warn(util.Logger).Log("msg", "shipper failed to synchronize TSDB blocks with the storage", "user", userID, "uploaded", uploaded, "err", err)
+		} else {
+			level.Debug(util.Logger).Log("msg", "shipper successfully synchronized TSDB blocks with storage", "user", userID, "uploaded", uploaded)
+		}
+	}
 }
 
 type handler struct {
