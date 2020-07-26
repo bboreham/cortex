@@ -486,7 +486,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		if !isRecognisedRecord(i.RangeValue()) {
 			continue
 		}
-		org, orgStr, seriesID, _, err := decodeHashValue(i.HashValue())
+		org, orgStr, seriesID, dayNumber, err := decodeHashValue(i.HashValue())
 		if err != nil {
 			level.Error(util.Logger).Log("msg", "error in hash value", "hash", i.HashValue(), "err", err)
 			continue
@@ -496,6 +496,17 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 				continue
 			}
 		}
+		// Skip series that are for a day bucket we are not considering.
+		// (needs improving if from/through can be less than a day)
+		dayTime, err := dayNumberToTime(dayNumber)
+		if err != nil {
+			level.Error(util.Logger).Log("msg", "error in day number", "hash", i.HashValue(), "err", err)
+			continue
+		}
+		if dayTime.Before(h.from) || dayTime.After(h.through) {
+			continue
+		}
+
 		if h.counts[org] == nil {
 			h.counts[org] = make(map[string]int)
 		}
@@ -574,6 +585,18 @@ func decodeHashValue(hashValue string) (org int, orgStr, seriesID string, dayNum
 	}
 	dayNumber = hashParts[1]
 	return
+}
+
+func dayNumberToTime(day string) (model.Time, error) {
+	if len(day) < 2 || day[0] != 'd' {
+		return 0, fmt.Errorf("invalid number: %q", day)
+	}
+	dayNumber, err := strconv.Atoi(day[1:])
+	if err != nil {
+		return 0, err
+	}
+	const millisecondsInDay = model.Time(24 * time.Hour / time.Millisecond)
+	return model.Time(dayNumber) * millisecondsInDay, nil
 }
 
 func fetchChunks(dstore chunk.Store2, userID, seriesID string, from, through model.Time, filter func(labels.Labels) error) ([]chunk.Chunk, error) {
