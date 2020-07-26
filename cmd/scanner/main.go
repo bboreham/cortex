@@ -153,13 +153,15 @@ func main() {
 	prevIndexReadCapacity, err := setReadCapacity(context.Background(), readClient, indexTableName, indexReadCapacity)
 	checkFatal(err)
 
+	endOfFirstDay := startOfWeek.Add(1*24*time.Hour - 1*time.Millisecond)
+
 	scanner, err := newScanner(tsdbConfig, prometheus.DefaultRegisterer)
 	checkFatal(err)
 	handlers := make([]handler, segments)
 	callbacks := make([]func(result chunk.ReadBatch), segments)
 	for segment := 0; segment < segments; segment++ {
 		// This only works for series-store, i.e. schema v9 and v10
-		handlers[segment] = newHandler(chunkStore.(chunk.Store2), scanner, indexTableName, startOfWeek, endOfWeek, includeOrgs, deleteOrgs)
+		handlers[segment] = newHandler(chunkStore.(chunk.Store2), scanner, indexTableName, startOfWeek, endOfFirstDay, includeOrgs, deleteOrgs)
 		callbacks[segment] = handlers[segment].handlePage
 	}
 
@@ -171,7 +173,7 @@ func main() {
 	type tableScanner interface {
 		Scan(ctx context.Context, tableName string, from, through model.Time, withValue bool, callbacks []func(result chunk.ReadBatch)) error
 	}
-	err = readClient.(tableScanner).Scan(context.Background(), indexTableName, startOfWeek, endOfWeek, false, callbacks)
+	err = readClient.(tableScanner).Scan(ctx, indexTableName, startOfWeek, endOfFirstDay, false, callbacks)
 	checkFatal(err)
 
 	level.Info(util.Logger).Log("msg", "finished scan, compacting head")
