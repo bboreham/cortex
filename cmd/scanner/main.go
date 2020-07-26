@@ -403,6 +403,7 @@ func (i *scanner) createTSDB(userID string) (*userTSDB, error) {
 		MaxBlockDuration:  blockRanges[len(blockRanges)-1],
 		NoLockfile:        true,
 		StripeSize:        i.cfg.TSDBConfig.StripeSize,
+		WALSegmentSize:    -1, // disable WAL
 		WALCompression:    i.cfg.TSDBConfig.WALCompressionEnabled,
 	})
 	if err != nil {
