@@ -488,7 +488,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 		}
 		org, orgStr, seriesID, _, err := decodeHashValue(i.HashValue())
 		if err != nil {
-			level.Error(util.Logger).Log("msg", "error in hash value", "hash", i.HashValue())
+			level.Error(util.Logger).Log("msg", "error in hash value", "hash", i.HashValue(), "err", err)
 			continue
 		}
 		if h.includeOrgs != nil {
