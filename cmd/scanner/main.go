@@ -558,6 +558,8 @@ func dedupe(dstore chunk.Store2, userID, seriesID string, from, through model.Ti
 	return ret, extras, allZeroes, nil
 }
 
+const timestampTolerance = 5
+
 // unpack and dedupe all samples from previous chunks; create one new chunk.
 func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encoding.Chunk, first, last int64, allZeroes bool, err error) {
 	ret, err = encoding.NewForEncoding(encoding.Bigchunk)
@@ -575,6 +577,15 @@ func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encodin
 		ts, v := iter.At()
 		if ts > int64(through) {
 			break
+		}
+		// If gap since last scrape is very close to an exact number of seconds, tighten it up
+		if last != 0 {
+			gap := ts - last
+			seconds := ((gap + 500) / 1000)
+			diff := int(gap - seconds*1000)
+			if diff != 0 && diff >= -timestampTolerance && diff <= timestampTolerance {
+				ts = last + seconds*1000
+			}
 		}
 		last = ts
 		if v != 0 {
