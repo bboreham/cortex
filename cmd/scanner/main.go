@@ -42,6 +42,10 @@ var (
 		Name: "cortex_chunks_stored_total",
 		Help: "Total stored chunks per user.",
 	}, []string{"user"})
+	chunkSizePerUser = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "cortex_chunk_stored_bytes_total",
+		Help: "Total bytes stored in chunks per user.",
+	}, []string{"user"})
 
 	removeBogusKubeletMetrics bool
 	copyChunksForNextWeek     bool
@@ -445,6 +449,7 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			}
 			h.putWithRetry(ctx, newChunk)
 			chunksPerUser.WithLabelValues(orgStr).Inc()
+			chunkSizePerUser.WithLabelValues(orgStr).Add(float64(newChunk.Data.Size()))
 			h.counts[org][metricName]++
 
 			// Copy through all chunks that span into next table, for when we stop re-indexing
