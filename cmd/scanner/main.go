@@ -42,6 +42,10 @@ var (
 		Name: "cortex_chunks_stored_total",
 		Help: "Total stored chunks per user.",
 	}, []string{"user"})
+	chunksNextPerUser = promauto.NewCounterVec(prometheus.CounterOpts{
+		Name: "cortex_chunks_nextweek_total",
+		Help: "Total chunks from next week copied per user.",
+	}, []string{"user"})
 	chunkSizePerUser = promauto.NewCounterVec(prometheus.CounterOpts{
 		Name: "cortex_chunk_stored_bytes_total",
 		Help: "Total bytes stored in chunks per user.",
@@ -455,8 +459,8 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 			// Copy through all chunks that span into next table, for when we stop re-indexing
 			for _, c := range extras {
 				h.putNoIndexWithRetry(ctx, c)
-				h.counts[org][metricName]++
 			}
+			chunksNextPerUser.WithLabelValues(orgStr).Add(float64(len(extras)))
 		}
 		// This cache write may duplicate what the store did, but we can't
 		// guarantee it's v9+, and don't know we have the same series IDs as it has
