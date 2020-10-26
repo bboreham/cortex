@@ -596,7 +596,8 @@ func dataFromChunks(from, through model.Time, chunks []chunk.Chunk) (ret encodin
 			gap := ts - last
 			seconds := ((gap + 500) / 1000)
 			diff := int(gap - seconds*1000)
-			if diff != 0 && diff >= -timestampTolerance && diff <= timestampTolerance {
+			// Don't go past 'through' limit.
+			if diff != 0 && diff >= -timestampTolerance && diff <= timestampTolerance && last+seconds*1000 <= int64(through) {
 				ts = last + seconds*1000
 			}
 		}
