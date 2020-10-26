@@ -65,6 +65,10 @@ type Chunk struct {
 	encoded []byte
 }
 
+func (c *Chunk) Description() string {
+	return fmt.Sprintf("UserID %q; from %d to %d, labels %s", c.UserID, c.From, c.Through, c.Metric.String())
+}
+
 // NewChunk creates a new chunk
 func NewChunk(userID string, fp model.Fingerprint, metric labels.Labels, c prom_chunk.Chunk, from, through model.Time) Chunk {
 	return Chunk{

@@ -469,25 +469,29 @@ func (h *handler) handlePage(page chunk.ReadBatch) {
 }
 
 func (h *handler) putWithRetry(ctx context.Context, newChunk *chunk.Chunk) {
-	for {
+	for c := 0; c < 100; c++ {
 		err := h.writeStore.Put(ctx, []chunk.Chunk{*newChunk})
-		if err != nil {
-			level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
-			continue
+		if err == nil {
+			return
 		}
-		break
+		level.Error(util.Logger).Log("msg", "put error - retrying", "err", err, "chunk", newChunk.Description())
+		time.Sleep(time.Second)
 	}
+	level.Error(util.Logger).Log("msg", "giving up after 1000 retries")
+	os.Exit(1)
 }
 
 func (h *handler) putNoIndexWithRetry(ctx context.Context, chunk chunk.Chunk) {
-	for {
+	for c := 0; c < 100; c++ {
 		err := h.writeStore.PutNoIndex(ctx, chunk)
-		if err != nil {
-			level.Error(util.Logger).Log("msg", "put error - retrying", "err", err)
-			continue
+		if err == nil {
+			return
 		}
-		break
+		level.Error(util.Logger).Log("msg", "putNoIndex error - retrying", "err", err, "chunk", chunk.Description())
+		time.Sleep(time.Second)
 	}
+	level.Error(util.Logger).Log("msg", "giving up after 1000 retries")
+	os.Exit(1)
 }
 
 func isRecognisedRecord(rangeValue []byte) bool {
