@@ -648,6 +648,11 @@ func isBogus(org int, lbls labels.Labels, allZeroes bool) bool {
 			return true
 		}
 	}
+	// Bogus metrics from old api-server
+	if strings.HasPrefix(metricName, "apiserver_admission_controller_admission_latencies_seconds_") ||
+		strings.HasPrefix(metricName, "apiserver_admission_step_admission_latencies_seconds_") {
+		return true
+	}
 	// Obsolete kubelet metrics - from https://github.com/coreos/kube-prometheus/blob/a8b4985de4dc/jsonnet/kube-prometheus/dropping-deprecated-metrics-relabelings.libsonnet
 	if strings.HasPrefix(metricName, "kubelet_") {
 		if metricName == "kubelet_pod_worker_latency_microseconds" ||
