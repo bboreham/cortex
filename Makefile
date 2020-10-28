@@ -86,25 +86,25 @@ NETGO_CHECK = @strings $@ | grep cgo_stub\\\.go >/dev/null || { \
 ifeq ($(BUILD_IN_CONTAINER),true)
 
 exes $(EXES) protos $(PROTO_GOS) lint test shell mod-check check-protos: build-image/$(UPTODATE)
-	@mkdir -p $(shell pwd)/.pkg
-	@mkdir -p $(shell pwd)/.cache
+	@mkdir -p $(GOPATH)/pkg
+	@mkdir -p $(GOPATH)/.cache/go-build
 	@echo
 	@echo ">>>> Entering build container: $@"
 	@$(SUDO) time docker run $(RM) $(TTY) -i \
-		-v $(shell pwd)/.cache:/go/cache \
-		-v $(shell pwd)/.pkg:/go/pkg \
+		-v $(GOPATH)/pkg:/go/pkg:delegated \
+		-v $(GOPATH)/.cache/go-build:/go/cache:delegated \
 		-v $(shell pwd):/go/src/github.com/cortexproject/cortex \
 		$(BUILD_IMAGE) $@;
 
 configs-integration-test: build-image/$(UPTODATE)
-	@mkdir -p $(shell pwd)/.pkg
-	@mkdir -p $(shell pwd)/.cache
+	@mkdir -p $(GOPATH)/.pkg
+	@mkdir -p $(GOPATH)/.cache/go-build
 	@DB_CONTAINER="$$(docker run -d -e 'POSTGRES_DB=configs_test' postgres:9.6)"; \
 	echo ; \
 	echo ">>>> Entering build container: $@"; \
 	$(SUDO) docker run $(RM) $(TTY) -i \
-		-v $(shell pwd)/.cache:/go/cache \
-		-v $(shell pwd)/.pkg:/go/pkg \
+		-v $(GOPATH)/pkg:/go/pkg:delegated \
+		-v $(GOPATH)/.cache/go-build:/go/cache:delegated \
 		-v $(shell pwd):/go/src/github.com/cortexproject/cortex \
 		-v $(shell pwd)/cmd/cortex/migrations:/migrations \
 		--workdir /go/src/github.com/cortexproject/cortex \
