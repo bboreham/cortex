@@ -175,7 +175,9 @@ func main() {
 	}
 
 	err = chunkStore.(chunk.Store2).Scan(context.Background(), tableTime, tableTime, false, startSegment, totalSegments, callbacks)
-	checkFatal(err)
+	if err != nil {
+		level.Error(util.Logger).Log("msg", "error from Scan", "err", err)
+	}
 
 	level.Info(util.Logger).Log("msg", "finished, shutting down")
 	if reindexStore != nil {
